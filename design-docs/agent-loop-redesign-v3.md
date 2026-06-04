@@ -100,11 +100,18 @@ v3:  对话式 —— while(用户消息) { LLM 自主决策 }
 
 ### 4.1 LLM 可用的工具
 
-| 工具 | 语义 | 何时触发 |
-|------|------|---------|
-| `graph_explore` | 启动深度探索 | 用户问题需要多跳推理 |
-| `getExplorationStatus` | 查看当前探索状态 | 用户追问之前的探索结果 |
-| （直接回复） | 不调工具，LLM 直接文本回复 | 澄清、闲聊、简单追问 |
+| 工具 | 数据源 | 语义 | 延迟 |
+|------|--------|------|------|
+| `query_financial_data` | neodata | 查询实时金融数据（行情、财报、板块、研报） | 1-3s |
+| `graph_explore` | knowledge-graph | 多跳关系推理和路径发现 | 30-120s |
+| （直接回复） | — | LLM 直接文本回复 | 流式 |
+
+**数据源路由**由外层 LLM 自主判断：
+- 实时行情/财报/板块 → query_financial_data
+- 多跳关系推理/供应链分析 → graph_explore
+- 两者都需要 → 先行情提取实体，再探索关系链
+
+详见 [neodata-integration.md](neodata-integration.md)
 
 ### 4.2 System Prompt 核心要素
 
