@@ -1,0 +1,415 @@
+import { useState, useCallback, useRef, useEffect } from "react";
+import type {
+  SessionSummary, ChatMessage, ChatContentBlock, StepEvent,
+  ToolStartEvent, ExplorationSummary, TurnSegment,
+} from "./types";
+import {
+  listSessions, createSession, deleteSession as deleteSessionApi,
+  getSession, sendMessage, createChatSSEConnection,
+} from "./api";
+import { SessionList } from "./components/SessionList";
+import { ChatView } from "./components/ChatView";
+import { SettingsModal } from "./components/SettingsModal";
+
+const MAX_CACHED_SESSIONS = 10;
+
+// ─── 每个会话的持久状态（存在 ref Map 中，切换 UI 不丢失）───
+
+interface SessionData {
+  messages: ChatMessage[];
+  isProcessing: boolean;
+  segments: TurnSegment[];
+  es: EventSource | null;
+}
+
+function createSessionData(): SessionData {
+  return {
+    messages: [],
+    isProcessing: false,
+    segments: [],
+    es: null,
+  };
+}
+
+// ─── App ───
+
+export default function App() {
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  // 所有会话的持久状态 — source of truth，独立于组件挂载/卸载
+  const sessionsRef = useRef<Map<string, SessionData>>(new Map());
+  const activeIdRef = useRef<string | null>(null);
+  const messageCache = useRef<Map<string, ChatMessage[]>>(new Map());
+
+  // 当前激活会话的 React 视图状态（用于渲染）
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [segments, setSegments] = useState<TurnSegment[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // ─── 工具函数 ───
+
+  const pruneCache = () => {
+    if (messageCache.current.size > MAX_CACHED_SESSIONS) {
+      const keys = [...messageCache.current.keys()];
+      for (const k of keys.slice(0, keys.length - MAX_CACHED_SESSIONS)) {
+        messageCache.current.delete(k);
+      }
+    }
+  };
+
+  /** 从 sessionsRef 同步 React 视图状态（仅当 sessionId 是当前活跃会话时） */
+  const syncView = useCallback((sessionId: string) => {
+    if (activeIdRef.current !== sessionId) return;
+    const data = sessionsRef.current.get(sessionId);
+    if (!data) return;
+    setChatMessages([...data.messages]);
+    setIsProcessing(data.isProcessing);
+    setSegments([...data.segments]);
+  }, []);
+
+  const refreshSessions = useCallback(async () => {
+    const list = await listSessions();
+    setSessions(list);
+    setLoaded(true);
+  }, []);
+
+  /** 完成一轮处理，重置状态并同步视图 */
+  const finishTurn = useCallback((sessionId: string) => {
+    const data = sessionsRef.current.get(sessionId);
+    if (!data) return;
+    if (data.es) { data.es.close(); data.es = null; }
+    data.isProcessing = false;
+    data.segments = [];
+
+    // 同步缓存
+    messageCache.current.set(sessionId, [...data.messages]);
+    pruneCache();
+    syncView(sessionId);
+
+    // 刷新会话列表
+    refreshSessions();
+  }, [syncView, refreshSessions]);
+
+  /** 从 segments 构建最终的 ChatMessage[] */
+  const buildFinalMessage = useCallback((sessionId: string) => {
+    const data = sessionsRef.current.get(sessionId);
+    if (!data || !data.isProcessing) return;
+
+    const segs = data.segments;
+    if (segs.length === 0) return;
+
+    const assistantBlocks: ChatContentBlock[] = [];
+    const toolResultBlocks: { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }[] = [];
+
+    for (const seg of segs) {
+      if (seg.type === "text") {
+        if (seg.text) {
+          assistantBlocks.push({ type: "text", text: seg.text });
+        }
+      } else {
+        // tool segment
+        assistantBlocks.push({
+          type: "tool_use",
+          id: seg.tool_use_id,
+          name: seg.tool_name,
+          input: seg.args,
+        });
+        if (seg.result) {
+          toolResultBlocks.push({
+            type: "tool_result",
+            tool_use_id: seg.tool_use_id,
+            content: JSON.stringify(seg.result),
+          });
+        } else if (seg.status === "error") {
+          toolResultBlocks.push({
+            type: "tool_result",
+            tool_use_id: seg.tool_use_id,
+            content: seg.error ?? "探索失败",
+            is_error: true,
+          });
+        }
+      }
+    }
+
+    // assistant 消息：text + tool_use 块
+    if (assistantBlocks.length > 0) {
+      data.messages.push({
+        role: "assistant",
+        content: assistantBlocks,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    // user 消息：所有 tool_result（Anthropic API 要求）
+    if (toolResultBlocks.length > 0) {
+      data.messages.push({
+        role: "user",
+        content: toolResultBlocks,
+        created_at: new Date().toISOString(),
+      });
+    }
+  }, []);
+
+  // ─── 核心操作：发送消息 ───
+
+  const handleSend = useCallback((text: string) => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+
+    let data = sessionsRef.current.get(sessionId);
+    if (!data) {
+      data = createSessionData();
+      sessionsRef.current.set(sessionId, data);
+    }
+    if (data.isProcessing) return;
+
+    // 重置状态
+    data.isProcessing = true;
+    data.segments = [];
+
+    // 追加用户消息
+    const userMsg: ChatMessage = { role: "user", content: text, created_at: new Date().toISOString() };
+    data.messages.push(userMsg);
+    syncView(sessionId);
+
+    // 建立 SSE 连接
+    const es = createChatSSEConnection(sessionId, {
+      onTextDelta: (t) => {
+        const d = sessionsRef.current.get(sessionId);
+        if (!d) return;
+        const segs = d.segments;
+        const last = segs[segs.length - 1];
+        if (last && last.type === "text") {
+          last.text += t;
+        } else {
+          segs.push({ type: "text", text: t, streaming: true });
+        }
+        syncView(sessionId);
+      },
+
+      onToolStart: (e) => {
+        const d = sessionsRef.current.get(sessionId);
+        if (!d) return;
+        const segs = d.segments;
+        // 关闭当前 TextSegment 的 streaming
+        const last = segs[segs.length - 1];
+        if (last && last.type === "text") {
+          last.streaming = false;
+        }
+        const ev = e as ToolStartEvent;
+        segs.push({
+          type: "tool",
+          tool_use_id: ev.tool_use_id,
+          tool_name: ev.tool_name,
+          args: ev.args,
+          steps: [],
+          result: null,
+          status: "running",
+        });
+        syncView(sessionId);
+      },
+
+      onToolResult: (e) => {
+        const d = sessionsRef.current.get(sessionId);
+        if (!d) return;
+        const segs = d.segments;
+        const ev = e as { tool_use_id?: string; result?: ExplorationSummary; is_error?: boolean; error?: string };
+        const tid = ev.tool_use_id;
+        if (!tid) return;
+        const toolSeg = segs.find((s) => s.type === "tool" && s.tool_use_id === tid);
+        if (toolSeg && toolSeg.type === "tool") {
+          if (ev.result) {
+            toolSeg.result = ev.result;
+            toolSeg.status = "completed";
+          } else if (ev.is_error) {
+            toolSeg.status = "error";
+            toolSeg.error = ev.error;
+          }
+        }
+        syncView(sessionId);
+      },
+
+      onStep: (e) => {
+        const d = sessionsRef.current.get(sessionId);
+        if (!d) return;
+        const segs = d.segments;
+        const ev = e as StepEvent;
+        const tid = ev.tool_use_id;
+        if (!tid) return;
+        const toolSeg = segs.find((s) => s.type === "tool" && s.tool_use_id === tid);
+        if (toolSeg && toolSeg.type === "tool") {
+          toolSeg.steps = [...toolSeg.steps, ev];
+        }
+        syncView(sessionId);
+      },
+
+      onFinalize: () => {
+        // tool_result 已携带完整 summary，finalize 仅作为完成信号
+        // 不做额外处理
+      },
+
+      onMessageComplete: () => {
+        buildFinalMessage(sessionId);
+        finishTurn(sessionId);
+      },
+
+      onError: (error) => {
+        const d = sessionsRef.current.get(sessionId);
+        if (!d) return;
+        const errMsg: ChatMessage = {
+          role: "assistant",
+          content: `处理出错：${error}`,
+          created_at: new Date().toISOString(),
+        };
+        d.messages.push(errMsg);
+        finishTurn(sessionId);
+      },
+    });
+
+    data.es = es;
+
+    // 发送 HTTP 请求
+    sendMessage(sessionId, text).catch((err) => {
+      console.error("[chat] send error:", err);
+      finishTurn(sessionId);
+    });
+  }, [syncView, finishTurn, buildFinalMessage]);
+
+  const handleStop = useCallback(() => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const data = sessionsRef.current.get(sessionId);
+    if (!data?.isProcessing) return;
+
+    if (data.es) { data.es.close(); data.es = null; }
+
+    // 标记正在运行的 tool segment 为 completed（截断）
+    for (const seg of data.segments) {
+      if (seg.type === "tool" && seg.status === "running") {
+        seg.status = "completed";
+      }
+    }
+
+    // 用当前 segments 构建最终消息
+    buildFinalMessage(sessionId);
+    finishTurn(sessionId);
+  }, [finishTurn, buildFinalMessage]);
+
+  // ─── 会话切换：只改视角，不清理数据 ───
+
+  const selectSession = (id: string) => {
+    activeIdRef.current = id;
+    setActiveId(id);
+
+    if (!sessionsRef.current.has(id)) {
+      const data = createSessionData();
+      const cached = messageCache.current.get(id);
+      if (cached) data.messages = cached;
+      sessionsRef.current.set(id, data);
+    }
+
+    syncView(id);
+
+    getSession(id)
+      .then((session) => {
+        const msgs = session?.messages ?? [];
+        messageCache.current.set(id, msgs);
+        pruneCache();
+        const data = sessionsRef.current.get(id);
+        if (data && data.messages.length === 0 && msgs.length > 0) {
+          data.messages = msgs;
+          syncView(id);
+        }
+      })
+      .catch(() => {});
+  };
+
+  // ─── 会话列表操作 ───
+
+  useEffect(() => {
+    refreshSessions().catch(() => { setSessions([]); setLoaded(true); });
+  }, [refreshSessions]);
+
+  const handleCreate = async () => {
+    const s = await createSession();
+    await refreshSessions();
+    selectSession(s.id);
+  };
+
+  const handleDelete = async (id: string) => {
+    sessionsRef.current.delete(id);
+    messageCache.current.delete(id);
+    await deleteSessionApi(id);
+    await refreshSessions();
+    if (activeIdRef.current === id) {
+      activeIdRef.current = null;
+      setActiveId(null);
+      setChatMessages([]);
+      setIsProcessing(false);
+      setSegments([]);
+    }
+  };
+
+  const handleRename = (id: string, title: string) => {
+    setSessions((prev) => prev.map((s) => s.id === id ? { ...s, title } : s));
+  };
+
+  // ─── 渲染 ───
+
+  if (!loaded) {
+    return <div className="h-screen flex items-center justify-center text-gray-500">Loading...</div>;
+  }
+
+  const isActiveProcessing = activeId ? isProcessing : false;
+
+  return (
+    <div className="h-screen flex bg-gray-50">
+      <SessionList
+        sessions={sessions}
+        activeId={activeId}
+        onSelect={selectSession}
+        onCreate={handleCreate}
+        onDelete={handleDelete}
+        onRename={handleRename}
+      />
+      <main className="flex-1 flex flex-col min-w-0">
+        {/* 顶栏 — 设置入口 */}
+        <div className="flex items-center justify-end px-4 py-2 border-b border-gray-200 bg-white">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
+            title="设置"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span>设置</span>
+          </button>
+        </div>
+        {activeId ? (
+          <ChatView
+            key={activeId}
+            sessionId={activeId}
+            messages={chatMessages}
+            isProcessing={isActiveProcessing}
+            segments={segments}
+            onSend={handleSend}
+            onStop={handleStop}
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-gray-400">
+            <div className="text-center">
+              <p className="text-lg mb-2">Graph Explorer</p>
+              <p className="text-sm">选择一个会话或创建新会话开始探索</p>
+            </div>
+          </div>
+        )}
+      </main>
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+    </div>
+  );
+}

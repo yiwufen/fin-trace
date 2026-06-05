@@ -1,0 +1,36 @@
+{
+  "name": "graph-explorer",
+  "version": "1.0.0",
+  "description": "Multi-hop relationship reasoning agent for financial knowledge graphs",
+  "main": "dist/index.js",
+  "bin": {
+    "graph-explorer": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "web/dist/",
+    "config.example.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc && cd web && npm ci && npm run build",
+    "dev": "cd web && npx vite build && cd .. && tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["graph-explorer", "knowledge-graph", "mcp", "financial-analysis"],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "openai": "^6.42.0",
+    "typescript": "^6.0.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.4"
+  }
+}

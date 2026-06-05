@@ -1,0 +1,17 @@
+{
+  "llm": {
+    "provider": "openai",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-pro",
+    "max_tokens": 38400,
+    "api_key": ""
+  },
+  "mcp": {
+    "servers": {
+      "knowledge-graph": {
+        "url": "https://<YOUR_KG_HOST>/mcp",
+        "transport": "streamable-http"
+      }
+    }
+  }
+}
