@@ -45,7 +45,7 @@ export class KgMcpClient {
 
   constructor() {
     this.client = new Client({
-      name: "graph-explorer",
+      name: "fin-trace",
       version: "1.0.0",
     });
   }

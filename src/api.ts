@@ -558,7 +558,7 @@ async function handleValidate(req: IncomingMessage, res: ServerResponse): Promis
         jsonrpc: "2.0",
         id: "validate",
         method: "initialize",
-        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "graph-explorer", version: "1.0.0" } },
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "fin-trace", version: "1.0.0" } },
       }),
       signal: AbortSignal.timeout(5000),
     });

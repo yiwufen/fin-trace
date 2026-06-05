@@ -33,7 +33,7 @@ const TOOL_DESCRIPTION = `在金融知识图谱上执行多跳关系探索。
 
 function buildServer(): McpServer {
   const server = new McpServer({
-    name: "graph-explorer",
+    name: "fin-trace",
     version: "1.0.0",
   });
 

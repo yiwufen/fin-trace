@@ -60,7 +60,7 @@ Agent Card 不需要额外文档或 Prompt 注入。**MCP tool definition 本身
 ## 辅助文档：Agent Card YAML（人读，非运行时）
 
 ```yaml
-agent_id: graph-explorer-v1
+agent_id: fin-trace-v1
 display_name: 图探索专家
 description: >
   在金融知识图谱上执行多跳关系推理和路径发现的专用 Agent。

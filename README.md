@@ -103,7 +103,7 @@
 ## 30 秒开始
 
 ```bash
-git clone <repo-url> && cd graph-explorer
+git clone <repo-url> && cd fin-trace
 
 cp config.example.json config.json   # 填入 API key 和知识图谱地址
 npm install && npm run dev           # 启动，监听 :3001
@@ -114,7 +114,7 @@ npm install && npm run dev           # 启动，监听 :3001
 ```json
 {
   "mcpServers": {
-    "graph-explorer": {
+    "fin-trace": {
       "type": "http",
       "url": "http://localhost:3001/mcp"
     }

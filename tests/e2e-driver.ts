@@ -1,4 +1,4 @@
-// 端到端集成测试驱动 — 以 MCP 客户端身份连接本地 graph-explorer 服务，调用 graph_explore
+// 端到端集成测试驱动 — 以 MCP 客户端身份连接本地 fin-trace 服务，调用 graph_explore
 // 用法: tsx tests/e2e-driver.ts [--goal "..."] [--seed "X,Y"] [--timeout-ms 180000]
 // 默认: goal="追踪宁德时代在欧洲市场的供应链布局", seed=["宁德时代"]
 

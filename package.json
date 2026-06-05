@@ -1,10 +1,10 @@
 {
-  "name": "graph-explorer",
+  "name": "fin-trace",
   "version": "1.0.0",
   "description": "Multi-hop relationship reasoning agent for financial knowledge graphs",
   "main": "dist/index.js",
   "bin": {
-    "graph-explorer": "./dist/index.js"
+    "fin-trace": "./dist/index.js"
   },
   "files": [
     "dist/",
@@ -19,7 +19,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": ["graph-explorer", "knowledge-graph", "mcp", "financial-analysis"],
+  "keywords": ["fin-trace", "knowledge-graph", "mcp", "financial-analysis"],
   "author": "",
   "license": "ISC",
   "type": "module",
