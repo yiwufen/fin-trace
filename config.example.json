@@ -9,7 +9,7 @@
   "mcp": {
     "servers": {
       "knowledge-graph": {
-        "url": "https://<YOUR_KG_HOST>/mcp",
+        "url": "https://182-61-1-77.nip.io/mcp",
         "transport": "streamable-http"
       }
     }
