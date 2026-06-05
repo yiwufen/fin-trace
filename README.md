@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2018-brightgreen" alt="Node.js ≥ 18">
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
+  <img src="https://img.shields.io/badge/license-AGPL%20v3-blue" alt="License: AGPL v3">
   <img src="https://img.shields.io/badge/status-active-success" alt="Status: Active">
 </p>
 
@@ -287,4 +287,4 @@ src/
 
 ## License
 
-MIT
+[GNU Affero General Public License v3.0](LICENSE) — 使用本项目或基于本项目的衍生作品，通过计算机网络提供服务的，必须开源全部源代码。
