@@ -19,6 +19,14 @@
 
 ---
 
+## Demo
+
+<p align="center">
+  <img src="docs/demo.gif" alt="Graph Explorer Demo" width="720">
+</p>
+
+---
+
 ## 问题
 
 大模型能回答"什么是供应链风险"，但无法回答：

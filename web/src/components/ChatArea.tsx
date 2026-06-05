@@ -82,7 +82,7 @@ export function ChatArea({ explorations, liveSteps, isRunning, onExplore, onFoll
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder={hasStarted ? "继续追问..." : "描述你想探索的问题，如：芯片管制对英伟达供应链的影响"}
+            placeholder={hasStarted ? "继续追问..." : "描述你想探索的问题，如：英伟达 GTC 大会对供应链产生了哪些影响？"}
             disabled={isRunning}
             className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-400"
           />
@@ -118,7 +118,7 @@ function EmptyState() {
           描述你想探索的问题，Agent 会在金融知识图谱上进行多跳推理
         </p>
         <div className="text-xs text-gray-300 space-y-1 pt-2">
-          <p>例如："芯片管制对英伟达供应链的影响"</p>
+          <p>例如："英伟达 GTC 大会对供应链产生了哪些影响？"</p>
           <p>例如："宁德时代的欧洲布局和台积电的关系"</p>
         </div>
       </div>
