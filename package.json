@@ -12,9 +12,10 @@
     "config.example.json",
     "README.md"
   ],
+  "workspaces": ["web"],
   "scripts": {
-    "build": "tsc && cd web && npm ci && npm run build",
-    "dev": "cd web && npx vite build && cd .. && tsx src/index.ts",
+    "build": "tsc && npm run build -w web",
+    "dev": "npm run build -w web && tsx src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
