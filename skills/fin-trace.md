@@ -3,86 +3,105 @@ name: fin-trace
 description: 当用户问题需要金融知识图谱多跳推理时激活。触发词：供应链追踪、传导路径、关系穿透、关联方排查、多跳推理、X对Y的影响链路、A和B的供应商重叠
 ---
 
-# fin-trace — 金融知识图谱子 Agent 集成指令
+# fin-trace — A2A Agent 使用指令
 
-你是 Host Agent。当用户问题无法通过单次知识库查询解决、需要在图中走多步探索时，spawn fin-trace 子 Agent。
+你是 Host Agent。fin-trace 是一个 A2A Agent，通过 Agent Card 暴露能力，通过 JSON-RPC 接收任务。
 
 ---
 
-## 判断：要不要 spawn
-
-用这句话测试用户问题：
+## 判断：要不要用
 
 > "这个问题能通过一次查图回答，还是需要在图中走多步探索？"
 
-| 一次查图能回答 → search_knowledge | 需要多步探索 → spawn fin-trace |
-|----------------------------------|-----------------------------|
+| 一次查图 → search_knowledge | 多步探索 → fin-trace |
+|----------------------------|---------------------|
 | "宁德时代是哪年成立的" | "美国制裁如何传导到宁德时代的欧洲供应链" |
 | "比亚迪最近有哪些事件" | "宁德时代和比亚迪的供应商有多少重叠" |
 | "A 公司的大股东是谁" | "Z 公司的关联方中是否有被制裁实体" |
 
 ---
 
-## 操作流程
+## A2A 调用流程
 
-### Step 1: 组装 prompt
+### Step 1: 发现 Agent
 
-从用户问题中提取 goal 和 seed_entities：
+拉取 Agent Card，确认 fin-trace 有 `graph_explore` skill：
 
 ```
-探索目标: <动词 + 关注点 + 核心实体 + 预期输出>
-起始实体: <实体1>[, <实体2>, <实体3>]
-最大深度: <默认 2，不确定时从 2 开始>
+GET /.well-known/agent-card.json
+→ { name: "fin-trace", skills: [{id: "graph_explore", ...}], url: "/a2a" }
 ```
 
-goal 示例：
-- ✓ "追踪美国出口管制对宁德时代欧洲供应链的传导路径"
-- ✓ "对比宁德时代和比亚迪的供应商重叠，分析各自制裁风险敞口"
-- ✗ "查一下宁德时代"（太模糊，子 Agent 会迷路）
+OpenClaw 的 `a2a_discover` 工具自动完成这一步。
 
-### Step 2: spawn 子 Agent
+### Step 2: 提交任务
 
-将上述 prompt 发给 fin-trace。子 Agent 跑在独立 session，上下文隔离，不污染主 session。
+发送 `tasks/send` 到 `/a2a`，参数用 DataPart 格式：
 
-**OpenClaw**（通过 A2A Agent Card 自动发现）
-```
-sessions_spawn(agent="fin-trace", prompt=<上述 prompt>)
-```
-
-**通用 A2A 调用**（直接 JSON-RPC）
-```
-POST /a2a → tasks/send
-  message.parts: [{type:"data", data:{goal, seed_entities, max_depth}}]
-  → {taskId, status:"submitted"}
-  
-随后 poll: tasks/get(taskId) → {status, artifacts}
-```
-
-### Step 3: yield
-
-spawn 之后立即 yield，释放当前 session：
-
-**OpenClaw**
-```
-sessions_yield(wait_for=[subSession.id])
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tasks/send",
+  "params": {
+    "message": {
+      "messageId": "...",
+      "role": "user",
+      "parts": [{
+        "type": "data",
+        "data": {
+          "goal": "追踪美国出口管制对宁德时代欧洲供应链的传导路径",
+          "seed_entities": ["宁德时代"],
+          "max_depth": 3
+        }
+      }]
+    }
+  }
+}
 ```
 
-子 Agent 完成时，平台自动唤醒主 session 并注入结果。**不要轮询，不要写检查循环。**
+返回 `{taskId, status: "submitted"}` —— 立即，不阻塞。
 
-### Step 4: 被唤醒后处理结果
+goal 格式：`动词 + 关注点 + 核心实体 + 预期输出`。不要写"查一下 XX"。
 
-1. 检查 `exploration_meta.reliability_note` — 非空说明有降级，在回答中标注
-2. 按 confidence 分层使用 findings：
-   - `high` → 直接用于结论
-   - `medium` → 交叉验证后使用
-   - `low` → 仅作线索，不输出为结论
-3. 用 `event_threads` 解释事件演变脉络
-4. **用自己的话组织最终回答**，不要原文粘贴 findings JSON
-5. 用户追问证据时，用 finding 的 `evidence` 字段（KU ID 列表）
+### Step 3: 等待完成
+
+三种方式，按平台支持选择：
+
+| 方式 | A2A 方法 | 说明 |
+|------|---------|------|
+| **SSE 流式**（推荐） | `tasks/sendSubscribe` | 提交任务同时打开 SSE，实时收每步进度 |
+| **轮询** | `tasks/get` | 定期查状态，直到 `completed` 或 `failed` |
+| **平台 spawn** | OpenClaw `sessions_spawn` + `sessions_yield` | 平台封装了 A2A，自动等+注入结果 |
+
+SSE 流示例：
+
+```
+POST /a2a → tasks/sendSubscribe
+  ← event: task / data: {taskId, status:"working", ...}
+  ← event: task / data: {taskId, status:"working", metadata:{step:5}}
+  ← event: task / data: {taskId, status:"completed", ...}
+```
+
+**不要同步等。** 这是长时任务（3-20 分钟），不是 API 调用。
+
+### Step 4: 处理结果
+
+任务 `completed` 后，从 `artifacts` 中取数据：
+
+```
+tasks/get → result.artifacts[0].parts[data] →
+  { findings, event_threads, exploration_meta }
+```
+
+1. 先看 `exploration_meta.reliability_note` → 非空有降级
+2. `findings` 按 confidence 分层：high → 结论，medium → 交叉验证，low → 线索
+3. `event_threads` 解释事件演变
+4. 用自己的话回答用户，不原文粘贴 JSON
 
 ---
 
-## 耗时预期
+## 耗时
 
 | depth | 耗时 |
 |-------|------|
@@ -94,8 +113,8 @@ sessions_yield(wait_for=[subSession.id])
 
 ## 禁忌
 
-- **不要同步调用**。graph_explore 是重型工具（3-20min），同步调用会阻塞主 session
-- **不要并发 spawn 多个**。内部已有工具并行，外部并发浪费资源
-- **不要对同一 goal 反复换 seed 重试**。结果不理想时，调整 goal 的描述
-- **不要用 search_knowledge 替代**。如果问题需要多跳，search_knowledge 会漏掉中间环节
-- **不要把 low confidence finding 当结论输出**
+- **不要同步调用**。A2A task 是异步的——send 后拿到 taskId 就走，等完成通知或 poll
+- **不要并发提交多个 task**。fin-trace 内部 Agent Loop 已有工具并行，外部并发浪费资源
+- **不要对同一 goal 反复换 seed 重试**。调整 goal 描述更有效
+- **不要把 low confidence finding 当结论**
+- **不要用 search_knowledge 替代**。单跳查不出来多跳传导路径

@@ -143,7 +143,7 @@ POST http://localhost:3001/a2a                            # A2A JSON-RPC
 
 **Host Agent 集成（OpenClaw）**
 
-fin-trace 是重型 Agent（3-20 分钟），Host Agent 应以 **Async Sub-agent + yield** 模式调用，避免阻塞主 session：
+fin-trace 是 A2A Agent（3-20 分钟任务），通过 Agent Card 自动发现。OpenClaw 的 `sessions_spawn` 封装了 A2A 协议，Host Agent 以 **spawn + yield** 模式调用：
 
 ```
 // 1. 判断用户问题是否需要多跳推理
