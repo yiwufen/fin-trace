@@ -83,9 +83,10 @@ export function getApiKey(): string {
   if (provider === "openai") {
     const key = process.env.OPENAI_API_KEY;
     if (key) return key;
+  } else {
+    const key = process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN;
+    if (key) return key;
   }
-  const envKey = process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN;
-  if (envKey) return envKey;
 
   // 2. data/settings.json（前端 UI 设置）
   const settingsKey = getSettingsApiKey();
