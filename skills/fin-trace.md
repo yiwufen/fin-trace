@@ -1,3 +1,8 @@
+---
+name: fin-trace
+description: 当用户问题需要金融知识图谱多跳推理时激活。触发词：供应链追踪、传导路径、关系穿透、关联方排查、多跳推理、X对Y的影响链路、A和B的供应商重叠
+---
+
 # fin-trace — 金融知识图谱子 Agent 集成指令
 
 你是 Host Agent。当用户问题无法通过单次知识库查询解决、需要在图中走多步探索时，spawn fin-trace 子 Agent。
