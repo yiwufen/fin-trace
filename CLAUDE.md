@@ -8,22 +8,23 @@ Implementation in progress. `design-docs/` contains the complete specification; 
 
 ## What This Is
 
-Graph Explorer Agent is a multi-hop relationship reasoning agent for financial knowledge graphs. It operates as an independent TypeScript process exposed as an MCP tool (`graph_explore`), called by a host agent (OpenClaw) when multi-hop reasoning is needed.
+Graph Explorer Agent is a multi-hop relationship reasoning agent for financial knowledge graphs. It operates as an independent TypeScript process exposed as an A2A Agent (`graph_explore` skill), called by a host agent (OpenClaw) when multi-hop reasoning is needed.
 
 ## Architecture at a Glance
 
 ```
-Host Agent (function call)
-    └→ graph_explore(goal, seed_entities, ...)
-           │
-           ▼
-    Graph Explorer (independent process)
+Host Agent (OpenClaw)
+    │  a2a_discover → Agent Card
+    │  a2a_send_task → taskId
+    │  a2a_task_status → poll
+    ▼
+fin-trace A2A Agent (independent process)
     │
     │  Agent Loop: EXPLORING → FINALIZE
-    │       ↕ MCP
+    │       ↕ MCP (internal)
     │  knowledge-graph MCP service
     │
-    └→ Returns: findings + event_threads + meta
+    └→ Returns: findings + event_threads + meta (as A2A Artifacts)
 ```
 
 Core constraint: **"Library over framework"** — no agent framework, the loop is entirely in own code.
@@ -43,7 +44,7 @@ All docs are in `design-docs/` with `README.md` as the master index.
 | `event-threads.md` | FINALIZE prompt + thread construction + validation |
 | `error-handling.md` | Fallback mapping, 3-level MCP degradation, LLM format repair |
 | `context-assembly.md` | Token budget allocation (128k), State View, compression strategy |
-| `agent-card.md` | MCP tool definition (is its own documentation) |
+| `agent-card.md` | A2A Agent Card + JSON-RPC contract |
 
 ## Project Configuration
 
@@ -66,14 +67,14 @@ Agent code reads MCP endpoint from this file at startup — no hardcoded URLs.
 
 ## Key Architectural Decisions
 
-- **Config-decoupled MCP**: `knowledge-graph` endpoint lives in `config.json`, not in agent code or Claude settings
+- **Config-decoupled**: `knowledge-graph` MCP endpoint lives in `config.json`, not in agent code. The A2A Agent Card URL is derived from the server port.
 
 - **Single-hop tool primitives**: Each tool enforces `hops=1`; multi-hop behavior emerges from the Agent Loop composing calls sequentially
 - **Phase isolation**: EXPLORING phase does not see event_buffer; FINALIZE gets full context injection
 - **Evidence traceability**: Every finding requires KU ID–backed evidence; threads validate ku_id existence against event_buffer
 - **Budget-aware at every level**: Token (128k), step (20 EXPLORING + 2 FINALIZE), and depth budgets checked each iteration with 4-level compression escalation
 - **Graceful degradation**: 3-level MCP error handling (retry → fallback → skip), LLM format auto-repair, diminishing-returns detection (4 consecutive identical decisions forces strategy switch)
-- **Tool definition IS the API**: The MCP tool schema for `graph_explore` serves as its own Agent Card — no separate integration doc needed
+- **A2A over MCP for external interface**: Long-running Agent Loop (3-20min) is exposed as an A2A Task (async submit → poll → collect artifacts), not a synchronous MCP function call. Internal KG communication still uses MCP.
 
 ## Finding Categories
 

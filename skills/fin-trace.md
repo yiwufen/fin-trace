@@ -44,23 +44,19 @@ goal 示例：
 
 将上述 prompt 发给 fin-trace。子 Agent 跑在独立 session，上下文隔离，不污染主 session。
 
-不同平台的 spawn 方式：
-
-**OpenClaw**
+**OpenClaw**（通过 A2A Agent Card 自动发现）
 ```
 sessions_spawn(agent="fin-trace", prompt=<上述 prompt>)
 ```
 
-**Claude Code**
+**通用 A2A 调用**（直接 JSON-RPC）
 ```
-spawn sub-agent with type "general-purpose", prompt=<上述 prompt>
+POST /a2a → tasks/send
+  message.parts: [{type:"data", data:{goal, seed_entities, max_depth}}]
+  → {taskId, status:"submitted"}
+  
+随后 poll: tasks/get(taskId) → {status, artifacts}
 ```
-
-**通用 MCP 调用**（无 spawn 机制时的降级方案）
-```
-graph_explore(goal, seed_entities, max_depth)
-```
-仅 depth=1 时可同步调用（设 5 分钟超时）。depth≥2 必须用 spawn。
 
 ### Step 3: yield
 
