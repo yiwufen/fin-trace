@@ -166,7 +166,7 @@ sessions_yield(wait_for=[session.id])
 //    按 confidence 分层使用 findings，用自己的话回答用户
 ```
 
-> Claude Code 用户可在项目内使用 `/fin-trace` 查看完整集成指令。
+> 完整集成指令见 [`skills/fin-trace.md`](skills/fin-trace.md)。
 
 <br>
 
