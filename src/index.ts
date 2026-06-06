@@ -29,7 +29,7 @@ const TOOL_DESCRIPTION = `在金融知识图谱上执行多跳关系探索。
 
 适合: 多跳关系推理、供应链风险追踪、传导路径分析
 不适合: 单实体事实查询、统计汇总、实时行情
-延迟: 通常 30s，最长 120s。`;
+延迟: depth=1 约 3-5 分钟，depth=2 约 5-12 分钟，受 KG 服务响应时间主导。`;
 
 function buildServer(): McpServer {
   const server = new McpServer({
