@@ -117,13 +117,28 @@ cp config.example.json config.json   # 填入 API key 和知识图谱地址
 npm install && npm run dev           # 启动，监听 :3001
 ```
 
-在 Claude Code 中使用：
+MCP 传输协议：**Streamable HTTP**。在各类客户端中配置：
+
+**Claude Code** (`claude.json`)
 
 ```json
 {
   "mcpServers": {
     "fin-trace": {
       "type": "http",
+      "url": "http://localhost:3001/mcp"
+    }
+  }
+}
+```
+
+**OpenClaw** 或其他 MCP 客户端
+
+```json
+{
+  "mcpServers": {
+    "fin-trace": {
+      "transport": "streamable-http",
       "url": "http://localhost:3001/mcp"
     }
   }
