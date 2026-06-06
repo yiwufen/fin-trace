@@ -1,55 +1,58 @@
 ---
 name: fin-trace
-description: 当需要金融知识图谱多跳推理时使用此 skill。触发词：供应链追踪、传导路径、关系穿透、关联方排查、多跳推理
+description: 当用户问题需要金融知识图谱多跳推理时激活。触发词：供应链追踪、传导路径、关系穿透、关联方排查、多跳推理、X对Y的影响链路、A和B的供应商重叠
 ---
 
 # fin-trace — 金融知识图谱子 Agent
 
-## 何时 spawn
+你是 Host Agent。当用户问题无法通过单次知识库查询解决、需要在图中走多步探索时，spawn fin-trace 子 Agent。
 
-满足以下条件时 spawn fin-trace 子 Agent：
+## 判断：要不要 spawn
 
-- 用户问题需要 **A→B→C 多跳关系推理**（供应链传导、股权穿透、关联方排查、事件链追溯）
-- 不是单实体事实查询（那是 search_knowledge 的事，~1s）
+用这句话测试用户问题：
 
-决策问句：**"这个问题能通过一次查图回答，还是需要在图中走多步探索？"** 后者 → spawn。
+> **"这个问题能通过一次查图回答，还是需要在图中走多步探索？"**
 
-## 何时不 spawn
+| 一次查图能回答 → search_knowledge | 需要多步探索 → spawn fin-trace |
+|----------------------------------|-----------------------------|
+| "宁德时代是哪年成立的" | "美国制裁如何传导到宁德时代的欧洲供应链" |
+| "比亚迪最近有哪些事件" | "宁德时代和比亚迪的供应商有多少重叠" |
+| "A 公司的大股东是谁" | "Z 公司的关联方中是否有被制裁实体" |
 
-- 单实体查询（"宁德时代是什么"、"A 公司有哪些事件"）→ 用 search_knowledge
-- 统计汇总、文档搜索、实时行情 → 不适用
-- 用户问题本身不涉及关系推理
+## 操作流程
 
-## 如何 spawn
+### Step 1: 组装 prompt
 
-```
-sessions_spawn({
-  agent: "fin-trace",
-  prompt: `
-探索目标: ${goal}
-起始实体: ${seed_entities.join(", ")}
-最大深度: ${max_depth}
-${relation_filters ? `关系过滤: ${relation_filters.join(", ")}` : ""}
-`,
-})
-```
-
-然后 **yield**，不要同步等：
+从用户问题中提取 goal 和 seed_entities，按以下模板组装：
 
 ```
-sessions_yield({ wait_for: [subSession.id] })
+探索目标: <动词 + 关注点 + 核心实体 + 预期输出>
+起始实体: <实体1>, <实体2>
+最大深度: <默认 2，不确定时从 2 开始>
 ```
 
-子 Agent 完成后，平台自动唤醒当前 session 并注入结果。
+goal 示例：
+- ✓ "追踪美国出口管制对宁德时代欧洲供应链的传导路径"
+- ✓ "对比宁德时代和比亚迪的供应商重叠，分析各自制裁风险敞口"
+- ✗ "查一下宁德时代"（太模糊，子 Agent 会迷路）
 
-## 参数怎么填
+### Step 2: spawn 子 Agent
 
-- **goal**: 自然语言。格式 "动词 + 关注点 + 核心实体 + 预期输出"。例如 "追踪美国制裁对宁德时代欧洲供应链的传导效应"。不要写 "查一下XX"——太模糊，内部 Agent Loop 会迷路。
-- **seed_entities**: 1-3 个实体中文名。1 个是深度追踪，多个是交叉比对。
-- **max_depth**: 默认 3。不确定时从 2 开始，不够再加。depth 越大越慢。
-- **relation_filters**: 不设，让内部 Agent 自己判断。除非你明确知道只要某类关系。
+```
+sessions_spawn(agent="fin-trace", prompt=<上述 prompt>)
+```
 
-## 耗时预期
+子 Agent 跑在独立 session，上下文隔离，不污染你的上下文窗口。
+
+### Step 3: yield
+
+```
+sessions_yield(wait_for=[subSession.id])
+```
+
+释放当前 session。等子 Agent 完成时，平台自动唤醒你并注入结果。**不要轮询，不要写检查循环**。
+
+子 Agent 耗时：
 
 | depth | 耗时 |
 |-------|------|
@@ -57,19 +60,20 @@ sessions_yield({ wait_for: [subSession.id] })
 | 2 | 5-12 分钟 |
 | 3+ | 8-20+ 分钟 |
 
-耗时由 KG 服务端工具调用主导（每次 20-60s），Agent Loop 每步 1-3 次调用。
+### Step 4: 被唤醒后处理结果
 
-## 收到结果后
+1. 检查 `exploration_meta.reliability_note` — 非空说明有降级，在回答中向用户标注
+2. 按 confidence 分层使用 findings：
+   - `high` → 直接用于结论
+   - `medium` → 交叉验证后使用
+   - `low` → 仅作线索，不输出为结论
+3. 用 `event_threads` 解释事件演变脉络（需要讲"故事"时）
+4. **用自己的话组织最终回答**，不要原文粘贴 findings JSON
+5. 用户追问证据时，用 finding 的 `evidence` 字段（KU ID 列表）
 
-1. **先看 exploration_meta.reliability_note**。非空 → 本次探索有降级，结论打折。
-2. **按 confidence 分层**：high → 可直接用；medium → 交叉验证后用；low → 不作为结论。
-3. **用自己的话回答用户**，不要原文转发 findings。findings 是素材，不是最终答案。
-4. 需要溯源时，每条 finding 的 evidence 字段是 KU ID 列表。
+## 禁忌
 
-## 不要做
-
-- **不要同步调用 graph_explore**。用 spawn + yield，让子 Agent 跑在独立 session。
-- **不要并发 spawn 多个**。内部已有工具并行，外部并发浪费资源。
-- **不要对同一 goal 反复换 seed 重试**。调整 goal 描述更有效。
-- **不要把 low confidence finding 当结论输出**。
-- **不要 spawn 后轮询**。yield 之后等平台回调，不要写检查循环。
+- **不要同步调用**。graph_explore 是重型工具（3-20min），必须 spawn + yield
+- **不要并发 spawn 多个**。内部已有工具并行，外部并发浪费资源
+- **不要对同一 goal 反复换 seed 重试**。如果结果不理想，调整 goal 的描述
+- **不要用 search_knowledge 替代**。如果问题需要多跳，search_knowledge 会漏掉中间环节

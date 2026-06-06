@@ -61,13 +61,13 @@
 │    └─────────┘     └─────────┘     └─────────┘          │
 │         ↑               ↑               ↑               │
 │         └───────────────┴───────────────┘               │
-│              ~30-120s 自主探索，多轮迭代                   │
+│              depth=1 约 3-5min，depth=2 约 5-12min          │
 │                                                         │
 │  输出: findings + event_threads + exploration_meta       │
 └─────────────────────────────────────────────────────────┘
 ```
 
-不是一个数据库查询（~1s），而是一个完整的调查任务（~30-120s）。Agent 自主决定每一步查什么、往哪个方向走、何时收敛。
+不是一个数据库查询（~1s），而是一个完整的调查任务（depth=1 约 3-5 分钟，depth=2 约 5-12 分钟）。Agent 自主决定每一步查什么、往哪个方向走、何时收敛。
 
 | 场景 | 能回答的问题 |
 |:-----|:------------|
@@ -145,6 +145,29 @@ MCP 传输协议：**Streamable HTTP**。在各类客户端中配置：
 }
 ```
 
+**Host Agent 集成（OpenClaw）**
+
+fin-trace 是重型工具（3-20 分钟），Host Agent 应以 **Async Sub-agent + yield** 模式调用，避免阻塞主 session：
+
+```
+// 1. 判断用户问题是否需要多跳推理
+//    需要 → spawn 子 Agent；不需要 → 用 search_knowledge
+
+// 2. spawn
+session = sessions_spawn(
+  agent="fin-trace",
+  prompt="探索目标: <goal>\n起始实体: <entities>\n最大深度: 2"
+)
+
+// 3. yield，释放主 session
+sessions_yield(wait_for=[session.id])
+
+// 4. 被平台唤醒后，检查 exploration_meta.reliability_note
+//    按 confidence 分层使用 findings，用自己的话回答用户
+```
+
+> Claude Code 用户可在项目内使用 `/fin-trace` 查看完整集成指令。
+
 <br>
 
 **输入 → 输出一览**
@@ -154,7 +177,7 @@ MCP 传输协议：**Streamable HTTP**。在各类客户端中配置：
 { "goal": "调查美国出口管制对宁德时代欧洲供应链的传导影响",
   "seed_entities": ["宁德时代"], "max_depth": 3 }
 
-// 输出 (~30-90s)
+// 输出 (depth=1 约 3-5 分钟，depth=2 约 5-12 分钟)
 {
   "findings": [{
     "id": "f_001",
