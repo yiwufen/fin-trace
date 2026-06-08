@@ -81,6 +81,8 @@ export interface SettingsResponse {
   };
   mcp: {
     knowledge_graph_url: string | null;
+    transport: "streamable-http" | "sse";
+    api_key_configured: boolean;
   };
 }
 
@@ -93,6 +95,8 @@ export interface SettingsUpdate {
   };
   mcp?: {
     knowledge_graph_url?: string;
+    transport?: "streamable-http" | "sse";
+    api_key?: string;
   };
 }
 

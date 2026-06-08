@@ -3,6 +3,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { readConfig } from "./config.js";
 import { type ToolInput, mapToMcpCall } from "./tools.js";
 import type { ToolResult, McpToolName } from "./state.js";
@@ -36,7 +37,7 @@ function isTextContent(c: unknown): c is TextContent {
 
 export class KgMcpClient {
   private client: Client;
-  private transport: StreamableHTTPClientTransport | null = null;
+  private transport: StreamableHTTPClientTransport | SSEClientTransport | null = null;
   private connected = false;
   private _state: McpClientState = {
     degraded: false,
@@ -55,14 +56,26 @@ export class KgMcpClient {
   async connect(): Promise<void> {
     const config = readConfig();
     const url = new URL(config.mcp.servers.knowledge_graph.url);
-    this.transport = new StreamableHTTPClientTransport(url);
+    const transportType = config.mcp.servers.knowledge_graph.transport ?? "streamable-http";
+    const apiKey = config.mcp.servers.knowledge_graph.api_key;
+
+    const requestInit: RequestInit = apiKey
+      ? { headers: { Authorization: `Bearer ${apiKey}` } }
+      : {};
+
+    if (transportType === "sse") {
+      this.transport = new SSEClientTransport(url, { requestInit });
+    } else {
+      this.transport = new StreamableHTTPClientTransport(url, { requestInit });
+    }
+
     await this.client.connect(this.transport);
     this.connected = true;
   }
 
   async close(): Promise<void> {
     if (this.transport) {
-      await this.transport.terminateSession();
+      await this.transport.close();
       this.transport = null;
     }
     this.connected = false;

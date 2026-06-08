@@ -6,6 +6,7 @@ import { getSettingsApiKey, readSettings } from "../settings-store.js";
 export interface McpServerConfig {
   url: string;
   transport: string;
+  api_key?: string;
 }
 
 export interface LlmConfig {
@@ -63,11 +64,13 @@ export function readConfig(): AppConfig {
     if (settings.llm.model) parsed.llm.model = settings.llm.model;
     // api_key 不挂到 config 上，由 getApiKey() 单独处理
   }
-  if (settings.mcp?.knowledge_graph_url) {
+  if (settings.mcp?.knowledge_graph_url || settings.mcp?.api_key || settings.mcp?.transport) {
     parsed.mcp = { ...parsed.mcp, servers: { ...parsed.mcp.servers } };
     parsed.mcp.servers.knowledge_graph = {
-      url: settings.mcp.knowledge_graph_url,
-      transport: "streamable-http",
+      ...parsed.mcp.servers.knowledge_graph,
+      ...(settings.mcp.knowledge_graph_url ? { url: settings.mcp.knowledge_graph_url } : {}),
+      ...(settings.mcp.transport ? { transport: settings.mcp.transport } : {}),
+      ...(settings.mcp.api_key ? { api_key: settings.mcp.api_key } : {}),
     };
   }
 

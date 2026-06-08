@@ -10,7 +10,8 @@
     "servers": {
       "knowledge-graph": {
         "url": "https://182-61-1-77.nip.io/mcp",
-        "transport": "streamable-http"
+        "transport": "streamable-http",
+        "api_key": ""
       }
     }
   }

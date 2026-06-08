@@ -34,6 +34,9 @@ import type { ChatMessage } from "./chat/types.js";
 import { readSettings, writeSettings } from "./settings-store.js";
 import type { SettingsStore } from "./settings-store.js";
 import { clearConfigCache } from "./agent/config.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("api");
 
 // ─── SSE 连接管理 ───
 
@@ -263,7 +266,7 @@ export async function handleApiRequest(
     sendJSON(res, 404, { error: "Not found" });
     return true;
   } catch (err) {
-    console.error("[api] error:", err);
+    log.error({ err }, "API 请求处理失败");
     sendJSON(res, 500, { error: "Internal server error" });
     return true;
   }
@@ -313,7 +316,7 @@ async function handleExplore(
   // 异步启动探索
   const onStep = buildOnStepCallback(sessionId, exploration.id);
   runExploration(
-    { goal, seed_entities, max_depth: depth, time_range: typeof time_range === "string" ? time_range : undefined },
+    { goal, seed_entities, session_id: sessionId, max_depth: depth, time_range: typeof time_range === "string" ? time_range : undefined },
     onStep,
   )
     .then(async ({ output, state }) => {
@@ -322,7 +325,7 @@ async function handleExplore(
       broadcastSSE(sessionId, "complete", { exploration_id: exploration.id, output });
     })
     .catch(async (err) => {
-      console.error("[api] exploration error:", err);
+      log.error({ err, sessionId }, "探索失败");
       await failExploration(sessionId, exploration.id, String(err?.message ?? err));
       broadcastSSE(sessionId, "error", { exploration_id: exploration.id, error: String(err?.message ?? err) });
     })
@@ -390,7 +393,7 @@ async function handleFollowup(
         }
       }
     } catch (err) {
-      console.error("[api] failed to restore state for followup:", err);
+      log.error({ err, sessionId }, "追问时恢复 state 失败");
     }
   }
 
@@ -418,7 +421,7 @@ async function handleFollowup(
       broadcastSSE(sessionId, "complete", { exploration_id: exploration.id, output });
     })
     .catch(async (err) => {
-      console.error("[api] followup error:", err);
+      log.error({ err, sessionId }, "追问失败");
       await failExploration(sessionId, exploration.id, String(err?.message ?? err));
       broadcastSSE(sessionId, "error", { exploration_id: exploration.id, error: String(err?.message ?? err) });
     })
@@ -498,6 +501,8 @@ function handleGetSettings(res: ServerResponse): void {
     },
     mcp: {
       knowledge_graph_url: settings.mcp?.knowledge_graph_url ?? null,
+      transport: settings.mcp?.transport ?? "streamable-http",
+      api_key_configured: !!(settings.mcp?.api_key) && settings.mcp!.api_key!.length > 0,
     },
   });
 }
@@ -532,6 +537,12 @@ async function handlePutSettings(req: IncomingMessage, res: ServerResponse): Pro
     if (typeof mcp.knowledge_graph_url === "string" && mcp.knowledge_graph_url.trim().length > 0) {
       merged.knowledge_graph_url = mcp.knowledge_graph_url.trim();
     }
+    if (mcp.transport === "streamable-http" || mcp.transport === "sse") {
+      merged.transport = mcp.transport;
+    }
+    if (typeof mcp.api_key === "string" && mcp.api_key.trim().length > 0) {
+      merged.api_key = mcp.api_key.trim();
+    }
     current.mcp = merged;
   }
 
@@ -540,41 +551,142 @@ async function handlePutSettings(req: IncomingMessage, res: ServerResponse): Pro
   sendJSON(res, 200, { ok: true });
 }
 
-/** 测试 KG MCP 服务连通性 — 发送 initialize 请求 */
-async function handleValidate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+/**
+ * 解析 MCP initialize 响应 — 同时支持 SSE 和 JSON 两种格式
+ *
+ * Streamable HTTP 服务端可能返回:
+ *   - Content-Type: application/json → 标准 JSON-RPC 响应
+ *   - Content-Type: text/event-stream → SSE 流（含 event: message + data: {...}）
+ */
+async function parseMCPInitResponse(response: Response): Promise<Record<string, unknown>> {
+  const ct = response.headers.get("content-type") ?? "";
+  const body = await response.text();
+
+  if (ct.includes("text/event-stream")) {
+    // SSE 格式: "event: message\ndata: {\"jsonrpc\":...}"
+    // 从 data: 行提取 JSON 对象（handle balanced braces for nested objects）
+    const dataIdx = body.indexOf("data: ");
+    if (dataIdx === -1) {
+      throw new Error(`无法解析 SSE 响应: ${body.slice(0, 200)}`);
+    }
+    const jsonStart = body.indexOf("{", dataIdx);
+    if (jsonStart === -1) {
+      throw new Error(`无法解析 SSE 响应: ${body.slice(0, 200)}`);
+    }
+    // balanced brace matching
+    let depth = 0;
+    let jsonEnd = -1;
+    for (let i = jsonStart; i < body.length; i++) {
+      if (body[i] === "{") depth++;
+      else if (body[i] === "}") { depth--; if (depth === 0) { jsonEnd = i; break; } }
+    }
+    if (jsonEnd === -1) {
+      throw new Error(`无法解析 SSE 响应: ${body.slice(0, 200)}`);
+    }
+    return JSON.parse(body.slice(jsonStart, jsonEnd + 1));
+  }
+
+  return JSON.parse(body);
+}
+
+/** 测试 KG MCP 服务连通性 — 支持 SSE 和 Streamable HTTP 两种协议 */
+async function handleValidate(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   const settings = readSettings();
   const kgUrl = settings.mcp?.knowledge_graph_url;
+  const transport = settings.mcp?.transport ?? "streamable-http";
+  const apiKey = settings.mcp?.api_key;
 
   if (!kgUrl) {
     sendJSON(res, 400, { error: "knowledge_graph_url 未配置" });
     return;
   }
 
+  const initPayload = {
+    jsonrpc: "2.0",
+    id: "validate",
+    method: "initialize",
+    params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "fin-trace", version: "1.0.0" } },
+  };
+
+  const authHeaders: Record<string, string> = apiKey
+    ? { Authorization: `Bearer ${apiKey}` }
+    : {};
+
   try {
-    const response = await fetch(kgUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "validate",
-        method: "initialize",
-        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "fin-trace", version: "1.0.0" } },
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
+    if (transport === "sse") {
+      // SSE 协议: GET SSE endpoint → 解析 endpoint 事件 → POST initialize 到 message endpoint
+      const sseResponse = await fetch(kgUrl, {
+        headers: { Accept: "text/event-stream", ...authHeaders },
+        signal: AbortSignal.timeout(5000),
+      });
 
-    if (!response.ok) {
-      sendJSON(res, 200, { ok: false, error: `HTTP ${response.status}` });
-      return;
+      if (!sseResponse.ok) {
+        sendJSON(res, 200, { ok: false, error: `SSE 连接失败 HTTP ${sseResponse.status}` });
+        return;
+      }
+
+      const ct = sseResponse.headers.get("content-type") ?? "";
+      if (!ct.includes("text/event-stream")) {
+        sendJSON(res, 200, { ok: false, error: `非 SSE 响应: Content-Type 为 ${ct}` });
+        return;
+      }
+
+      // 读取第一个 SSE 事件获取 message endpoint
+      const reader = sseResponse.body!.getReader();
+      const { value } = await reader.read();
+      reader.cancel();
+      const text = new TextDecoder().decode(value);
+
+      // 解析: "event: endpoint\ndata: <url>"
+      const endpointMatch = text.match(/event:\s*endpoint\s*\n?data:\s*(\S+)/);
+      if (!endpointMatch?.[1]) {
+        sendJSON(res, 200, { ok: false, error: "未收到 SSE endpoint 事件" });
+        return;
+      }
+
+      const messageUrl = endpointMatch[1].trim();
+
+      const initResponse = await fetch(messageUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...authHeaders },
+        body: JSON.stringify(initPayload),
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!initResponse.ok) {
+        sendJSON(res, 200, { ok: false, error: `Initialize 请求失败 HTTP ${initResponse.status}` });
+        return;
+      }
+
+      const data = await parseMCPInitResponse(initResponse);
+      if (data.error) {
+        sendJSON(res, 200, { ok: false, error: String((data.error as Record<string, string>).message ?? JSON.stringify(data.error)) });
+        return;
+      }
+
+      sendJSON(res, 200, { ok: true, server: data.result });
+    } else {
+      // Streamable HTTP: 直接 POST initialize
+      const response = await fetch(kgUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...authHeaders },
+        body: JSON.stringify(initPayload),
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        sendJSON(res, 200, { ok: false, error: `HTTP ${response.status}` });
+        return;
+      }
+
+      const data = await parseMCPInitResponse(response);
+      if (data.error) {
+        sendJSON(res, 200, { ok: false, error: String((data.error as Record<string, string>).message ?? JSON.stringify(data.error)) });
+        return;
+      }
+
+      sendJSON(res, 200, { ok: true, server: data.result });
     }
-
-    const data = await response.json() as Record<string, unknown>;
-    if (data.error) {
-      sendJSON(res, 200, { ok: false, error: String((data.error as Record<string, string>).message ?? JSON.stringify(data.error)) });
-      return;
-    }
-
-    sendJSON(res, 200, { ok: true, server: data.result });
   } catch (err) {
     sendJSON(res, 200, { ok: false, error: String((err as Error).message) });
   }
@@ -617,7 +729,7 @@ async function handleChat(
   if (history.length === 0 && session.title === "新会话") {
     const newTitle = message.trim().slice(0, 40);
     updateSession(sessionId, { title: newTitle }).catch((err) => {
-      console.error("[api] failed to update session title:", err);
+      log.warn({ err, sessionId }, "自动更新会话标题失败");
     });
   }
 
@@ -645,7 +757,7 @@ async function handleChat(
       await appendChatMessages(chatSessionId, [userMsg, ...newMessages]);
     })
     .catch(async (err) => {
-      console.error("[api] chat error:", err);
+      log.error({ err, sessionId }, "聊天处理失败");
       // 即使出错也至少持久化用户消息
       appendChatMessages(chatSessionId, [userMsg]).catch(() => {});
       broadcastSSE(sessionId, "error", {
@@ -710,7 +822,7 @@ function buildOnStepCallback(
   return (event: StepEvent) => {
     // 异步写入文件（不阻塞 loop）
     appendStep(sessionId, explorationId, event).catch((err) => {
-      console.error("[api] appendStep error:", err);
+      log.warn({ err, sessionId }, "appendStep 写入失败");
     });
 
     // 实时推送给 SSE 客户端

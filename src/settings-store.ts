@@ -25,6 +25,8 @@ export interface SettingsStore {
   };
   mcp?: {
     knowledge_graph_url?: string;
+    transport?: "streamable-http" | "sse";
+    api_key?: string;
   };
 }
 

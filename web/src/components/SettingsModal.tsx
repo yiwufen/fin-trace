@@ -7,10 +7,18 @@ interface Props {
   onClose: () => void;
 }
 
-const PROVIDER_PRESETS: { value: "openai" | "anthropic"; label: string; defaultBaseUrl: string; defaultModel: string }[] = [
-  { value: "openai", label: "DeepSeek / OpenAI 兼容", defaultBaseUrl: "https://api.deepseek.com", defaultModel: "deepseek-v4-pro" },
-  { value: "openai", label: "OpenAI", defaultBaseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o" },
-  { value: "anthropic", label: "Anthropic", defaultBaseUrl: "https://api.anthropic.com", defaultModel: "claude-sonnet-4-6" },
+interface ProviderPreset {
+  id: string;
+  value: "openai" | "anthropic";
+  label: string;
+  defaultBaseUrl: string;
+  defaultModel: string;
+}
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  { id: "deepseek", value: "openai", label: "DeepSeek / OpenAI 兼容", defaultBaseUrl: "https://api.deepseek.com", defaultModel: "deepseek-v4-pro" },
+  { id: "openai", value: "openai", label: "OpenAI", defaultBaseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o" },
+  { id: "anthropic", value: "anthropic", label: "Anthropic", defaultBaseUrl: "https://api.anthropic.com", defaultModel: "claude-sonnet-4-6" },
 ];
 
 export function SettingsModal({ open, onClose }: Props) {
@@ -20,7 +28,10 @@ export function SettingsModal({ open, onClose }: Props) {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [kgUrl, setKgUrl] = useState("");
+  const [transport, setTransport] = useState<"streamable-http" | "sse">("streamable-http");
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+  const [kgApiKey, setKgApiKey] = useState("");
+  const [kgApiKeyConfigured, setKgApiKeyConfigured] = useState(false);
 
   // ─── UI 状态 ───
   const [saving, setSaving] = useState(false);
@@ -42,6 +53,8 @@ export function SettingsModal({ open, onClose }: Props) {
         if (s.llm.model) setModel(s.llm.model);
         setApiKeyConfigured(s.llm.api_key_configured);
         if (s.mcp.knowledge_graph_url) setKgUrl(s.mcp.knowledge_graph_url);
+        if (s.mcp.transport) setTransport(s.mcp.transport);
+        setKgApiKeyConfigured(s.mcp.api_key_configured);
       })
       .catch(() => {});
   }, [open]);
@@ -60,11 +73,17 @@ export function SettingsModal({ open, onClose }: Props) {
         },
         mcp: {
           knowledge_graph_url: kgUrl.trim() || undefined,
+          transport,
+          ...(kgApiKey.trim() ? { api_key: kgApiKey.trim() } : {}),
         },
       });
       if (apiKey.trim()) {
         setApiKeyConfigured(true);
         setApiKey("");
+      }
+      if (kgApiKey.trim()) {
+        setKgApiKeyConfigured(true);
+        setKgApiKey("");
       }
       setMessage({ type: "success", text: "配置已保存" });
     } catch (err) {
@@ -72,7 +91,7 @@ export function SettingsModal({ open, onClose }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [provider, baseUrl, model, apiKey, kgUrl]);
+  }, [provider, baseUrl, model, apiKey, kgUrl, transport, kgApiKey]);
 
   // ─── 测试连通性 ───
   const handleValidate = useCallback(async () => {
@@ -83,9 +102,13 @@ export function SettingsModal({ open, onClose }: Props) {
     setValidating(true);
     setValidateResult(null);
     try {
-      // 先保存当前 MCP 配置
+      // 先保存当前 MCP 配置（含 transport 和 api_key）
       await updateSettings({
-        mcp: { knowledge_graph_url: kgUrl.trim() },
+        mcp: {
+          knowledge_graph_url: kgUrl.trim(),
+          transport,
+          ...(kgApiKey.trim() ? { api_key: kgApiKey.trim() } : {}),
+        },
       });
       const result = await validateKGEndpoint();
       setValidateResult(result);
@@ -94,7 +117,7 @@ export function SettingsModal({ open, onClose }: Props) {
     } finally {
       setValidating(false);
     }
-  }, [kgUrl]);
+  }, [kgUrl, transport, kgApiKey]);
 
   if (!open) return null;
 
@@ -124,12 +147,17 @@ export function SettingsModal({ open, onClose }: Props) {
             <select
               value={provider}
               onChange={(e) => {
-                setProvider(e.target.value);
+                const preset = PROVIDER_PRESETS[e.target.selectedIndex];
+                if (preset) {
+                  setProvider(preset.value);
+                  setBaseUrl(preset.defaultBaseUrl);
+                  setModel(preset.defaultModel);
+                }
               }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {PROVIDER_PRESETS.map((p) => (
-                <option key={p.label} value={p.value}>{p.label}</option>
+                <option key={p.id} value={p.value}>{p.label}</option>
               ))}
             </select>
           </div>
@@ -187,14 +215,48 @@ export function SettingsModal({ open, onClose }: Props) {
         <fieldset className="space-y-4">
           <legend className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Knowledge Graph</legend>
 
+          {/* Transport 协议选择 */}
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-gray-600">Endpoint URL</label>
+            <label className="block text-sm font-medium text-gray-600">MCP 协议</label>
+            <div className="flex gap-2">
+              <label className={`flex-1 flex items-center justify-center px-3 py-2 border rounded-lg text-sm cursor-pointer transition-colors ${transport === "streamable-http" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                <input
+                  type="radio"
+                  name="transport"
+                  value="streamable-http"
+                  checked={transport === "streamable-http"}
+                  onChange={() => { setTransport("streamable-http"); setValidateResult(null); }}
+                  className="sr-only"
+                />
+                Streamable HTTP
+              </label>
+              <label className={`flex-1 flex items-center justify-center px-3 py-2 border rounded-lg text-sm cursor-pointer transition-colors ${transport === "sse" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                <input
+                  type="radio"
+                  name="transport"
+                  value="sse"
+                  checked={transport === "sse"}
+                  onChange={() => { setTransport("sse"); setValidateResult(null); }}
+                  className="sr-only"
+                />
+                SSE
+              </label>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-gray-600">
+              Endpoint URL
+              <span className="ml-1 text-xs text-gray-400">
+                {transport === "sse" ? "（SSE endpoint，如 /sse）" : "（HTTP endpoint）"}
+              </span>
+            </label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={kgUrl}
                 onChange={(e) => { setKgUrl(e.target.value); setValidateResult(null); }}
-                placeholder="https://your-kg-host/mcp"
+                placeholder={transport === "sse" ? "https://your-kg-host/sse" : "https://your-kg-host/mcp"}
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
@@ -211,6 +273,30 @@ export function SettingsModal({ open, onClose }: Props) {
                 {validateResult.ok ? "连接成功" : `连接失败：${validateResult.error}`}
               </p>
             )}
+          </div>
+
+          {/* KG API Key */}
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-gray-600">
+              API Key
+              {kgApiKeyConfigured && <span className="ml-2 text-xs text-green-600">已配置</span>}
+            </label>
+            <div className="relative">
+              <input
+                type={showKey ? "text" : "password"}
+                value={kgApiKey}
+                onChange={(e) => setKgApiKey(e.target.value)}
+                placeholder={kgApiKeyConfigured ? "输入新值以更新" : "API Key（可选）"}
+                className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600"
+              >
+                {showKey ? "隐藏" : "显示"}
+              </button>
+            </div>
           </div>
         </fieldset>
 
