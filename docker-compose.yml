@@ -50,9 +50,10 @@ services:
       - REGISTRY_AUTH=htpasswd
       - REGISTRY_AUTH_HTPASSWD_REALM=fin-trace Registry
       - REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
+    ports:
+      - "127.0.0.1:5000:5000"
     networks:
       - knowledge-net
-    # 不暴露宿主机端口 — 仅通过 knowledge-net 内 Caddy 反代访问
 
 networks:
   # 加入 KG 的外部网络，使 knowledge-caddy 能用容器名 fin-trace:3001 反代（HTTPS）
