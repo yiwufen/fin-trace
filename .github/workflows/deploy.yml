@@ -53,7 +53,6 @@ jobs:
             fi
 
             echo "==> Build image (with proxy)"
-            SHA=$(git rev-parse --short HEAD)
             docker build --network host \
               --build-arg BUILD_PROXY=http://127.0.0.1:7890 \
               -t localhost:5000/fin-trace:latest \
