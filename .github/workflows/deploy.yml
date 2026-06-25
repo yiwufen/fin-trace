@@ -44,10 +44,12 @@ jobs:
             cd ~/fin-trace
 
             echo "==> Sync latest code"
-            if [ -d .git ]; then
+            if git rev-parse --git-dir >/dev/null 2>&1; then
               git pull origin main
+              SHA=$(git rev-parse --short HEAD)
             else
-              echo "(no .git, using existing code — synced via rsync)"
+              echo "(no .git, using existing code)"
+              SHA=$(date +%Y%m%d%H%M%S)
             fi
 
             echo "==> Build image (with proxy)"
