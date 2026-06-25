@@ -1,8 +1,7 @@
 name: Deploy
 
-# 策略：CI 不做 docker build/push（GitHub Actions 跨境推 500MB 镜像不可行）
-# CI 只做类型检查 + SSH 触发服务器自构建。
-# 服务器有代理（127.0.0.1:7890），构建后推送到本地 Registry (localhost:5000)，
+# CI: GitHub Actions 做类型检查 → SSH 触发服务器自构建部署
+# 服务器有代理 (127.0.0.1:7890)，构建后推本地 Registry (localhost:5000)，
 # docker compose pull + up -d，全程不走公网。
 
 on:
@@ -43,14 +42,13 @@ jobs:
             set -euo pipefail
             cd ~/fin-trace
 
-            echo "==> Sync latest code"
-            if git rev-parse --git-dir >/dev/null 2>&1; then
-              git pull origin main
-              SHA=$(git rev-parse --short HEAD)
-            else
-              echo "(no .git, using existing code)"
-              SHA=$(date +%Y%m%d%H%M%S)
-            fi
+            # git 走代理（服务器无法直连 GitHub）
+            export http_proxy=http://127.0.0.1:7890
+            export https_proxy=http://127.0.0.1:7890
+
+            echo "==> Pull latest code"
+            git pull origin main
+            SHA=$(git rev-parse --short HEAD)
 
             echo "==> Build image (with proxy)"
             docker build --network host \
