@@ -43,8 +43,12 @@ jobs:
             set -euo pipefail
             cd ~/fin-trace
 
-            echo "==> Pull latest code"
-            git pull origin main
+            echo "==> Sync latest code"
+            if [ -d .git ]; then
+              git pull origin main
+            else
+              echo "(no .git, using existing code — synced via rsync)"
+            fi
 
             echo "==> Build image (with proxy)"
             SHA=$(git rev-parse --short HEAD)
