@@ -1,23 +1,22 @@
 # fin-trace Docker Compose
 #
-# 两种用法：
-#   本地构建:   docker compose up -d --build     （build 段生效）
-#   预构建镜像: 先 docker load < fin-trace.tar.gz，再 docker compose up -d
-#               （image 段生效，服务器无代理/无源码时用这条）
+# CI 构建推送部署（推荐）：
+#   GitHub Actions 构建镜像 → push 到私有 Registry → SSH 服务器 pull + up -d
+#   日常部署仅传输增量层（几 MB），秒级完成。
+#
+# 本地兜底（无 CI 时）：
+#   先 docker build -t registry.fin.182-61-1-77.nip.io/fin-trace:latest .
+#   再 docker compose up -d
 #
 # 映射宿主机 3001 → 容器 3001（避开 443 上的 KG MCP 服务）
 # data/ 持久化：sessions / settings.json / share-tokens.json
 
 services:
   fin-trace:
-    image: fin-trace:latest
+    # CI 构建推送镜像到私有 Registry，服务器仅 pull + up -d
+    image: registry.fin.182-61-1-77.nip.io/fin-trace:latest
+    pull_policy: always
     container_name: fin-trace
-    build:
-      context: .
-      # 本地构建期可选：服务器网络受限时用宿主机 :7890 代理
-      # network: host
-      # args:
-      #   - BUILD_PROXY=http://127.0.0.1:7890
     restart: unless-stopped
     # 以宿主机 deployer 用户(uid 1000)运行，使 data/ 文件 deployer 可直接读写
     user: "1000:1000"
@@ -37,6 +36,23 @@ services:
     networks:
       - default
       - knowledge-net
+
+  # ─── 私有 Docker Registry ───
+  # CI 构建产物推送至此，服务器从 localhost 拉取（Caddy 套 HTTPS + Basic Auth）
+  registry:
+    image: registry:2
+    container_name: fin-trace-registry
+    restart: unless-stopped
+    volumes:
+      - ./registry-data:/var/lib/registry
+      - ./registry-auth:/auth:ro
+    environment:
+      - REGISTRY_AUTH=htpasswd
+      - REGISTRY_AUTH_HTPASSWD_REALM=fin-trace Registry
+      - REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
+    networks:
+      - knowledge-net
+    # 不暴露宿主机端口 — 仅通过 knowledge-net 内 Caddy 反代访问
 
 networks:
   # 加入 KG 的外部网络，使 knowledge-caddy 能用容器名 fin-trace:3001 反代（HTTPS）

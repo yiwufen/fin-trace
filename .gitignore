@@ -3,6 +3,8 @@ dist/
 web/dist/
 config.json
 data/
+registry-data/
+registry-auth/
 .env
 *.tsbuildinfo
 .claude/

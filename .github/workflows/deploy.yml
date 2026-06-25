@@ -1,0 +1,66 @@
+name: Deploy
+
+# 推送 main 分支时自动构建 Docker 镜像，推送到服务器私有 Registry，
+# 然后 SSH 到服务器执行 docker compose pull + up -d
+#
+# 日常部署仅传输增量镜像层（通常几 MB），秒级完成。
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker Build & Push
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          REGISTRY="registry.fin.182-61-1-77.nip.io"
+          IMAGE="${REGISTRY}/fin-trace:latest"
+
+          echo "::group::Build image"
+          docker build -t "${IMAGE}" .
+          echo "::endgroup::"
+
+          echo "::group::Push to private registry"
+          echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY}" -u "${REGISTRY_USER}" --password-stdin
+          docker push "${IMAGE}"
+          echo "::endgroup::"
+
+      - name: Deploy on Server
+        uses: appleboy/ssh-action@v1
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # 服务器可能正在恢复中，设置较长的超时
+          timeout: 5m
+          envs: REGISTRY_USER,REGISTRY_PASSWORD
+          script: |
+            REGISTRY="registry.fin.182-61-1-77.nip.io"
+
+            cd ~/fin-trace
+
+            echo "==> Pull latest image"
+            echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY}" -u "${REGISTRY_USER}" --password-stdin
+            docker compose pull
+
+            echo "==> Restart containers"
+            docker compose up -d --remove-orphans
+
+            echo "==> Cleanup old images"
+            docker image prune -f
+
+            echo "==> Done"
+            docker compose ps
