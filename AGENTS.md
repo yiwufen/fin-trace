@@ -74,6 +74,7 @@ Registry: localhost:5000 (仅本机)，Caddy 上无暴露路由
 - **推送本地镜像前移除 Docker 客户端代理** — 否则 `localhost:5000` 也被劫持
 - **Caddy 修改后必须 `docker restart`** — `caddy reload` 有 bind mount 缓存
 - **Registry 数据目录不可 rsync `--delete`** — `registry-data/`、`registry-auth/` 需排除
+- **CI 用独立 SSH 密钥对** — `ssh-keygen -t ed25519 -C "fin-trace-ci"` 生成，公钥写入 `authorized_keys`，私钥存 GitHub Secrets
 - 完整部署文档：`docs/deploy.md`
 - `config.json` — runtime configuration (gitignored; see `config.example.json`)
 - `data/` — runtime data (gitignored)

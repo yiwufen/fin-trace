@@ -40,7 +40,7 @@ bash scripts/setup-registry.sh
 | `REGISTRY_PASSWORD` | setup-registry.sh 输出的密码 |
 | `SSH_HOST` | `182.61.1.77` |
 | `SSH_USER` | `deployer` |
-| `SSH_PRIVATE_KEY` | `~/.ssh/id_rsa` 完整内容 |
+| `SSH_PRIVATE_KEY` | CI 专用密钥对的私钥内容（建议 `ssh-keygen -t ed25519 -C "fin-trace-ci"` 生成，公钥加入服务器 `~/.ssh/authorized_keys`） |
 
 ### 3. 启动服务
 
