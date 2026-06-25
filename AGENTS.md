@@ -42,6 +42,8 @@ npm run typecheck   # tsc --noEmit (type check only)
 
 No test runner is configured; correctness is verified via `typecheck` and end-to-end runs.
 
+> **开发环境注意事项**: Node.js 通过 nvm 管理（当前 v20.20.2），位于 `~/.nvm/versions/node/`。ZCode Agent 的 Bash 工具使用非交互式 shell，不会自动 source `.bashrc`，因此执行 node/npm 命令前需先 `source ~/.nvm/nvm.sh`。
+
 ## Project Structure
 
 - `src/` — TypeScript implementation (each source file maps to one design doc)
