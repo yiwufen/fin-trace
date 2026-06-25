@@ -48,6 +48,33 @@ No test runner is configured; correctness is verified via `typecheck` and end-to
 - `design-docs/` — the specification; `README.md` is the master index
 - `web/` — npm workspace for the frontend (Vite + React)
 - `skills/` — cross-platform skill definitions (e.g. `fin-trace.md`)
+- `docs/` — deployment guide and ops runbook
+- `scripts/` — one-time setup scripts (registry init)
+- `.github/workflows/` — CI/CD pipeline
+
+## Deployment Architecture
+
+```
+GitHub Actions (CI)              百度服务器 182.61.1.77 (CD)
+typecheck ──SSH 触发──→  git pull
+                         docker build --network host (走代理 127.0.0.1:7890)
+                         docker push localhost:5000
+                         docker compose pull + up -d
+                         health check
+
+Registry: localhost:5000 (仅本机)，Caddy 上无暴露路由
+镜像:    localhost:5000/fin-trace:latest
+环境:    deployer@182.61.1.77, ~/fin-trace/, 3.8 GB 内存
+```
+
+### 部署关键约束
+
+- **服务器无法直连外网** — Docker Hub / npm 必须走 `127.0.0.1:7890` 代理
+- **构建用 `--network host`** — 否则容器内无法访问宿主机代理
+- **推送本地镜像前移除 Docker 客户端代理** — 否则 `localhost:5000` 也被劫持
+- **Caddy 修改后必须 `docker restart`** — `caddy reload` 有 bind mount 缓存
+- **Registry 数据目录不可 rsync `--delete`** — `registry-data/`、`registry-auth/` 需排除
+- 完整部署文档：`docs/deploy.md`
 - `config.json` — runtime configuration (gitignored; see `config.example.json`)
 - `data/` — runtime data (gitignored)
 
