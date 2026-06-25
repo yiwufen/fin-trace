@@ -9,11 +9,12 @@ interface Props {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  sidebarOpen?: boolean;
 }
 
-export function SessionList({ sessions, activeId, onSelect, onCreate, onDelete, onRename }: Props) {
+export function SessionList({ sessions, activeId, onSelect, onCreate, onDelete, onRename, sidebarOpen = true }: Props) {
   return (
-    <aside className="w-64 border-r border-gray-200 bg-white flex flex-col shrink-0">
+    <aside className={`fixed md:relative z-40 inset-y-0 left-0 w-64 border-r border-gray-200 bg-white flex flex-col shrink-0 transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
       <div className="p-3 border-b border-gray-200 flex items-center justify-between">
         <span className="font-medium text-sm text-gray-700">会话</span>
         <button
@@ -101,17 +102,17 @@ function SessionItem({
             {formatTime(session.updated_at)}
           </p>
         </div>
-        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => { e.stopPropagation(); setTitle(session.title); setEditing(true); }}
-            className="text-gray-400 hover:text-blue-500 text-xs"
+            className="text-gray-400 hover:text-blue-500 text-xs py-1 px-1.5 rounded"
             title="重命名"
           >
             e
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); if (confirm("确定删除？")) onDelete(session.id); }}
-            className="text-gray-400 hover:text-red-500 text-xs"
+            className="text-gray-400 hover:text-red-500 text-xs py-1 px-1.5 rounded"
             title="删除"
           >
             x

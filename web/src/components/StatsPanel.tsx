@@ -26,7 +26,7 @@ export function StatsPanel({ meta }: Props) {
         统计 {expanded ? "▲" : "▼"}
       </button>
       {expanded && (
-        <div className="absolute top-6 right-0 z-10 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs space-y-1.5">
+        <div className="absolute top-6 right-0 z-10 w-64 max-w-[85vw] bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs space-y-1.5">
           <div className="flex justify-between">
             <span className="text-gray-500">完成原因</span>
             <span className="text-gray-800">{meta.completion_reason}</span>

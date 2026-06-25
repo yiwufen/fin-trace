@@ -53,10 +53,10 @@ export function FindingCard({ finding }: Props) {
       {/* Evidence */}
       {finding.evidence.length > 0 && (
         <div className="mt-2">
-          <button
-            onClick={() => setEvidenceExpanded(!evidenceExpanded)}
-            className="text-xs text-blue-600 hover:underline"
-          >
+	          <button
+	            onClick={() => setEvidenceExpanded(!evidenceExpanded)}
+	            className="text-xs text-blue-600 hover:underline py-1 px-1 -mx-1 rounded"
+	          >
             {finding.evidence.length} 条证据 {evidenceExpanded ? "▲" : "▼"}
           </button>
           {evidenceExpanded && (

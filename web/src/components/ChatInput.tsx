@@ -36,7 +36,7 @@ export function ChatInput({ onSend, isProcessing, onStop }: Props) {
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4">
+    <div className="border-t border-gray-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
       <div className="max-w-3xl mx-auto flex gap-2 items-end">
         <textarea
           ref={textareaRef}

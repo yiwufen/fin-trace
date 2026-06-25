@@ -211,7 +211,7 @@ export function ShareTokenManager({ open, onClose }: Props) {
         {/* 创建表单 */}
         <div className="border border-gray-200 rounded-lg p-4 space-y-3">
           <legend className="text-sm font-semibold text-gray-500 uppercase tracking-wide">新建链接</legend>
-          <div className="flex gap-2 items-end">
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
             <div className="flex-1 space-y-1.5">
               <label className="block text-xs text-gray-500">标签（如 张三）</label>
               <input

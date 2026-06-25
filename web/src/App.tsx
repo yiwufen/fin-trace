@@ -55,6 +55,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [authLost, setAuthLost] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // ─── 全局 401 拦截：token 失效时弹出重登浮层 ───
   useEffect(() => {
@@ -439,25 +440,40 @@ export default function App() {
   }
 
   if (!loaded) {
-    return <div className="h-screen flex items-center justify-center text-gray-500">Loading...</div>;
+    return <div className="h-dvh flex items-center justify-center text-gray-500">Loading...</div>;
   }
 
   const isActiveProcessing = activeId ? isProcessing : false;
 
   return (
     <AdminGate>
-      <div className="h-screen flex bg-gray-50">
+      <div className="h-dvh flex bg-gray-50">
+        {/* 移动端遮罩 */}
+        {sidebarOpen && (
+          <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setSidebarOpen(false)} />
+        )}
         <SessionList
           sessions={sessions}
           activeId={activeId}
-          onSelect={selectSession}
+          sidebarOpen={sidebarOpen}
+          onSelect={(id) => { selectSession(id); setSidebarOpen(false); }}
           onCreate={handleCreate}
           onDelete={handleDelete}
           onRename={handleRename}
         />
         <main className="flex-1 flex flex-col min-w-0">
-          {/* 顶栏 — 设置 + 分享入口 */}
-          <div className="flex items-center justify-end px-4 py-2 border-b border-gray-200 bg-white gap-4">
+          {/* 顶栏 — 移动端汉堡 + 设置 + 分享入口 */}
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-white">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden p-2 -ml-2 rounded-lg hover:bg-gray-100 text-gray-500"
+              aria-label="打开会话列表"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <div className="flex items-center gap-4 md:ml-auto">
             <button
               onClick={() => setShareOpen(true)}
               className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
@@ -479,6 +495,7 @@ export default function App() {
               </svg>
               <span>设置</span>
             </button>
+            </div>
           </div>
           {activeId ? (
             <ChatView

@@ -47,7 +47,7 @@ export function AdminGate({ children }: Props) {
 
   if (state === "checking") {
     return (
-      <div className="h-screen flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-dvh flex items-center justify-center text-gray-400 text-sm">
         验证访问权限...
       </div>
     );
@@ -58,7 +58,7 @@ export function AdminGate({ children }: Props) {
   }
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gray-50">
+    <div className="h-dvh flex items-center justify-center bg-gray-50">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 w-full max-w-sm space-y-4">
         <div className="text-center space-y-1">
           <div className="text-2xl">🔐</div>
