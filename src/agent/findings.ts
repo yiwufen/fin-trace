@@ -7,6 +7,9 @@
 
 import { randomUUID } from "node:crypto";
 import type { ExplorationState, Finding, ToolResult, RawEvent, EventDataType } from "./state.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("findings");
 
 // ─── LLM 输出的原始 Finding（含路由提示）───
 
@@ -228,7 +231,10 @@ export function processNewFindings(
     if (evidence.length === 0) {
       evidence = extractEvidenceFromArchive(raw, state);
     }
-    console.log(`[findings] statement="${raw.statement.slice(0, 60)}" evidence=${evidence.length} entities=${raw.entities_involved.join(",")}`);
+    log.debug(
+      { statement: raw.statement.slice(0, 60), evidence: evidence.length, entities: raw.entities_involved },
+      "处理 finding",
+    );
     const weightedCount = weightedEvidenceCount(evidence, state.raw_event_archive);
     const finding: Finding = {
       id: `finding_${randomUUID()}`,

@@ -21,6 +21,7 @@ export interface TemporalContext {
 export interface ExplorationInput {
   goal: string;
   seed_entities: string[];
+  session_id?: string;
   time_range?: string;
   max_depth?: number;
   max_steps?: number;

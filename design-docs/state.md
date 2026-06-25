@@ -50,7 +50,7 @@ EXPLORING 触达 100k → 强制进入 FINALIZE。预算检查在每步工具调
 
 | 字段 | 说明 |
 |------|------|
-| last_n_decisions | 最近 N 步的 decision（continue/expand/deep_dive/verify/sufficient） |
+| last_n_decisions | 最近 N 步的 effective decision（expand/deep_dive/verify/sufficient/stalemate）。其中 sufficient/stalemate 由独立的 `stop` 字段经 `extractStopSignal` 合成，非 LLM 的 decision 字段直接产出 |
 | last_n_finding_counts | 最近 N 步的 finding 增量（检测边际递减） |
 
 ### 工具调用状态

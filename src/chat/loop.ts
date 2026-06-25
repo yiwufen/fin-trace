@@ -306,9 +306,9 @@ async function runOuterTurn(
             const enriched = { ...event, tool_use_id: tb.id };
             if (event.type === "finalize") {
               broadcast("finalize", enriched);
-            } else if (event.type === "error") {
-              broadcast("error", enriched);
             } else {
+              // 所有步骤事件（含 error 类型）统一走 "step" 通道，
+              // 避免 SSE "error" 事件触发前端 finishTurn 终止会话
               broadcast("step", enriched);
             }
           },

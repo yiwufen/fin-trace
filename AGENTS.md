@@ -1,8 +1,8 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents (e.g. ZCode Agent) when working with code in this repository.
 
-> 说明：本项目的 Agent 指令同时维护了 `AGENTS.md`（供 ZCode Agent 读取）。两份文件内容等价，**`AGENTS.md` 为单一事实来源**；本文件仅作 Claude Code 适配保留，如需修改请同步更新 `AGENTS.md`。
+> 注：本项目同时保留 `CLAUDE.md` 与 `.claude/rules/`，供 Claude Code 使用。两份配置内容等价；当两者冲突时，以本文件（AGENTS.md）为准。
 
 ## Project Status
 
@@ -30,6 +30,26 @@ fin-trace A2A Agent (independent process)
 ```
 
 Core constraint: **"Library over framework"** — no agent framework, the loop is entirely in own code.
+
+## Build & Test Commands
+
+```bash
+npm run build       # tsc && build web workspace → dist/ + web/dist/
+npm run dev         # build web then tsx src/index.ts (development run)
+npm start           # node dist/index.js (production run)
+npm run typecheck   # tsc --noEmit (type check only)
+```
+
+No test runner is configured; correctness is verified via `typecheck` and end-to-end runs.
+
+## Project Structure
+
+- `src/` — TypeScript implementation (each source file maps to one design doc)
+- `design-docs/` — the specification; `README.md` is the master index
+- `web/` — npm workspace for the frontend (Vite + React)
+- `skills/` — cross-platform skill definitions (e.g. `fin-trace.md`)
+- `config.json` — runtime configuration (gitignored; see `config.example.json`)
+- `data/` — runtime data (gitignored)
 
 ## Design Document Index
 
@@ -70,7 +90,6 @@ Agent code reads MCP endpoint from this file at startup — no hardcoded URLs.
 ## Key Architectural Decisions
 
 - **Config-decoupled**: `knowledge-graph` MCP endpoint lives in `config.json`, not in agent code. The A2A Agent Card URL is derived from the server port.
-
 - **Single-hop tool primitives**: Each tool enforces `hops=1`; multi-hop behavior emerges from the Agent Loop composing calls sequentially
 - **Phase isolation**: EXPLORING phase does not see event_buffer; FINALIZE gets full context injection
 - **Evidence traceability**: Every finding requires KU ID–backed evidence; threads validate ku_id existence against event_buffer
@@ -81,6 +100,40 @@ Agent code reads MCP endpoint from this file at startup — no hardcoded URLs.
 ## Finding Categories
 
 Four types: `pattern_violation`, `concentration`, `chain`, `absence`. Extraction is triggered by step thresholds, strategy switches, unexpected results, or sufficient signal. Dedup uses entity overlap + category match + keyword similarity.
+
+## Architecture Constraints（架构约束）
+
+These constraints are binding — treat them as hard limits when editing code.
+
+### Implementation Fidelity（实现保真）
+- `design-docs/` is the specification. Implement as written, don't improvise architecture.
+- The 5 tools (lookup, trace, timeline, expand, scan) are fixed — do not add, remove, or rename tools.
+- `hops=1` is enforced at tool level; depth control is the Agent Loop's job, not a tool parameter to change.
+
+### Config Decoupling（配置解耦）
+- MCP endpoint must be read from `config.json` at startup. Never hardcode URLs into source code.
+- When adding new external service dependencies, add their URLs to `config.json` as well.
+
+### Framework Constraint（框架约束）
+- Do not introduce agent frameworks (LangChain, AutoGen, CrewAI, etc.). The Agent Loop is custom code.
+- Use lightweight libraries for MCP client, not orchestration layers.
+- "Library over framework" — prefer composing small, focused modules over adopting a framework's abstractions.
+
+### Evidence Traceability（证据可追溯）
+- Every Finding must have `evidence: string[]` (KU IDs). No evidence = not a valid finding.
+- Event Threads must validate `ku_id` against `event_buffer` before inclusion.
+- `reliability_note` must be set when any degradation occurred during the session.
+
+## Language & Style Conventions（语言与风格约定）
+
+### Language（语言）
+- Documents, design notes, and code comments: Chinese (with English technical terms where natural).
+- Code identifiers (variables, functions, types, files): English.
+- Git commit messages: English.
+
+### Style（风格）
+- Match the writing style of existing `design-docs/` — concise, structured with tables and code blocks, no filler prose.
+- TypeScript interfaces follow the naming in `design-docs/state.md` exactly (ExplorationState, Finding, EventThread, etc.).
 
 ## Implementation Principles
 

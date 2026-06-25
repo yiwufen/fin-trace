@@ -11,6 +11,16 @@
 //   POST /api/sessions/:id/followup     — 追问
 //   GET  /api/settings/status            — API Key 配置状态
 //   PUT  /api/settings                   — 更新 API Key
+//   管理端（需 X-Admin-Token，当配置了 admin_token 时）:
+//   GET    /api/share-tokens            — 分享令牌列表
+//   POST   /api/share-tokens            — 创建令牌
+//   PATCH  /api/share-tokens/:token     — 禁用/启用令牌
+//   DELETE /api/share-tokens/:token     — 删除令牌
+//   公共（无需 admin token）:
+//   GET  /api/public/demo               — 展示会话（只读，不计次）
+//   GET  /api/public/token/:token       — 令牌信息（只读，不计次）
+//   POST /api/public/token/:token/chat  — HR 发消息（计次）
+//   GET  /api/public/token/:token/stream — HR SSE
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -29,6 +39,15 @@ import {
   failExploration,
   appendChatMessages,
 } from "./session-store.js";
+import {
+  listTokens,
+  createToken,
+  disableToken,
+  deleteToken,
+  getToken,
+  incrementUsage,
+  ensureHrSession,
+} from "./share-store.js";
 import { handleUserMessage } from "./chat/loop.js";
 import type { ChatMessage } from "./chat/types.js";
 import { readSettings, writeSettings } from "./settings-store.js";
@@ -121,7 +140,7 @@ function sendJSON(res: ServerResponse, status: number, data: unknown): void {
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Token",
 };
 
 function corsPreflight(res: ServerResponse): void {
@@ -165,7 +184,29 @@ export async function handleApiRequest(
     return true;
   }
 
-  // 只处理 /api/sessions 或 /api/settings 路径
+  // ─── 公共命名空间（无需 admin token）───
+  // HR 通过分享链接访问，仅暴露 demo 查看与限次聊天
+  if (url.startsWith("/api/public/")) {
+    await handlePublic(req, res);
+    return true;
+  }
+
+  // ─── admin 门禁：配置了 admin_token 后，管理端需 X-Admin-Token 头 ───
+  // 影响 /api/sessions*、/api/settings*、/api/share-tokens*
+  const adminToken = readSettings().web?.admin_token;
+  if (adminToken) {
+    const provided = req.headers["x-admin-token"];
+    if (provided !== adminToken) {
+      sendJSON(res, 401, { error: "Unauthorized: invalid or missing admin token" });
+      return true;
+    }
+  }
+
+  // ─── /api/share-tokens — 分享令牌管理（admin）───
+  if (url.startsWith("/api/share-tokens")) {
+    await handleShareTokens(req, res);
+    return true;
+  }
 
   // /api/settings — API Key 配置
   if (url.startsWith("/api/settings")) {
@@ -254,6 +295,13 @@ export async function handleApiRequest(
     // /api/sessions/:id/cancel — 取消探索
     if (match.action === "cancel" && req.method === "POST") {
       handleCancel(match.sessionId, res);
+      return true;
+    }
+
+    // /api/sessions/:id/status — 查询是否正在处理
+    if (match.action === "status" && req.method === "GET") {
+      const isRunning = runningExplorations.has(match.sessionId);
+      sendJSON(res, 200, { running: isRunning });
       return true;
     }
 
@@ -504,12 +552,21 @@ function handleGetSettings(res: ServerResponse): void {
       transport: settings.mcp?.transport ?? "streamable-http",
       api_key_configured: !!(settings.mcp?.api_key) && settings.mcp!.api_key!.length > 0,
     },
+    a2a: {
+      inbound_token_configured:
+        !!(settings.a2a?.inbound_token) && settings.a2a.inbound_token.length > 0,
+    },
+    web: {
+      demo_session_id: settings.web?.demo_session_id ?? null,
+      admin_token_configured:
+        !!(settings.web?.admin_token) && settings.web.admin_token.length > 0,
+    },
   });
 }
 
 async function handlePutSettings(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readBody(req);
-  const { llm, mcp } = JSON.parse(body || "{}");
+  const { llm, mcp, a2a, web } = JSON.parse(body || "{}");
 
   const current = readSettings();
 
@@ -544,6 +601,30 @@ async function handlePutSettings(req: IncomingMessage, res: ServerResponse): Pro
       merged.api_key = mcp.api_key.trim();
     }
     current.mcp = merged;
+  }
+
+  // A2A 入站鉴权配置
+  if (a2a && typeof a2a === "object") {
+    const merged: SettingsStore["a2a"] = { ...current.a2a };
+    if (typeof a2a.inbound_token === "string" && a2a.inbound_token.trim().length > 0) {
+      merged.inbound_token = a2a.inbound_token.trim();
+    }
+    current.a2a = merged;
+  }
+
+  // Web 公开访问配置
+  if (web && typeof web === "object") {
+    const merged: SettingsStore["web"] = { ...current.web };
+    // demo_session_id 允许设为 null（清除）或字符串
+    if (web.demo_session_id === null) {
+      merged.demo_session_id = undefined;
+    } else if (typeof web.demo_session_id === "string" && web.demo_session_id.trim().length > 0) {
+      merged.demo_session_id = web.demo_session_id.trim();
+    }
+    if (typeof web.admin_token === "string" && web.admin_token.trim().length > 0) {
+      merged.admin_token = web.admin_token.trim();
+    }
+    current.web = merged;
   }
 
   writeSettings(current);
@@ -769,6 +850,176 @@ async function handleChat(
       // 延迟清理缓冲
       setTimeout(() => stepBuffers.delete(sessionId), 5000);
     });
+}
+
+// ─── 公共命名空间 ───
+// HR 通过分享链接访问：查看 demo（只读不计次）+ 限次聊天
+
+async function handlePublic(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const url = req.url ?? "/";
+  const path = url.split("?")[0];
+
+  // GET /api/public/demo — 展示会话（只读）
+  if (path === "/api/public/demo" && req.method === "GET") {
+    const demoId = readSettings().web?.demo_session_id;
+    if (!demoId) {
+      sendJSON(res, 404, { error: "未配置展示会话" });
+      return;
+    }
+    const session = await getSession(demoId);
+    if (!session) {
+      sendJSON(res, 404, { error: "展示会话不存在" });
+      return;
+    }
+    res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+    res.end(JSON.stringify(session));
+    return;
+  }
+
+  // GET /api/public/token/:token — 令牌信息（只读不计次）
+  const tokenInfoMatch = path.match(/^\/api\/public\/token\/([^/]+)$/);
+  if (tokenInfoMatch && req.method === "GET") {
+    const t = getToken(tokenInfoMatch[1]);
+    if (!t || t.disabled) {
+      sendJSON(res, 404, { error: "链接无效或已禁用" });
+      return;
+    }
+    sendJSON(res, 200, {
+      label: t.label,
+      remaining: Math.max(0, t.usage_limit - t.usage_count),
+      limit: t.usage_limit,
+      used: t.usage_count,
+    });
+    return;
+  }
+
+  // POST /api/public/token/:token/chat — HR 发消息（计次）
+  const chatMatch = path.match(/^\/api\/public\/token\/([^/]+)\/chat$/);
+  if (chatMatch && req.method === "POST") {
+    await handlePublicChat(chatMatch[1], req, res);
+    return;
+  }
+
+  // GET /api/public/token/:token/stream — HR SSE
+  const streamMatch = path.match(/^\/api\/public\/token\/([^/]+)\/stream$/);
+  if (streamMatch && req.method === "GET") {
+    const t = getToken(streamMatch[1]);
+    if (!t || t.disabled) {
+      sendJSON(res, 404, { error: "链接无效或已禁用" });
+      return;
+    }
+    const sessionId = await ensureHrSession(t.token);
+    if (!sessionId) {
+      sendJSON(res, 404, { error: "无法创建会话" });
+      return;
+    }
+    handleSSE(sessionId, req, res);
+    return;
+  }
+
+  sendJSON(res, 404, { error: "Not found" });
+}
+
+/** HR 聊天：先校验令牌 + 剩余次数 + 并发，再复用 handleChat。
+ *  计次在确认可派发后执行，避免并发拒绝（409）浪费配额。 */
+async function handlePublicChat(
+  token: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const t = getToken(token);
+  if (!t || t.disabled) {
+    sendJSON(res, 404, { error: "链接无效或已禁用" });
+    return;
+  }
+  if (t.usage_count >= t.usage_limit) {
+    sendJSON(res, 403, { error: "使用次数已用完", remaining: 0, limit: t.usage_limit });
+    return;
+  }
+
+  // 懒创建 HR 会话（在计次前解析，便于并发检查）
+  const sessionId = await ensureHrSession(t.token);
+  if (!sessionId) {
+    sendJSON(res, 500, { error: "无法创建会话" });
+    return;
+  }
+
+  // 并发检查：HR 会话正在处理时拒绝（不计次）。
+  // 与 handleChat 内部 runningExplorations 检查一致，避免重复计次。
+  if (runningExplorations.has(sessionId)) {
+    sendJSON(res, 409, { error: "上一条消息还在处理中，请稍候", remaining: t.usage_limit - t.usage_count });
+    return;
+  }
+
+  // 确认可派发 → 计次（+1），再交给 handleChat 派发
+  incrementUsage(t.token);
+
+  // 复用现有 handleChat（内部已处理并发防护、SSE 广播）
+  await handleChat(sessionId, req, res);
+}
+
+// ─── 分享令牌管理（admin）───
+
+async function handleShareTokens(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const url = req.url ?? "/";
+  const path = url.split("?")[0];
+
+  // GET /api/share-tokens — 列表
+  if (path === "/api/share-tokens" && req.method === "GET") {
+    const tokens = listTokens();
+    res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+    res.end(JSON.stringify(tokens));
+    return;
+  }
+
+  // POST /api/share-tokens — 创建
+  if (path === "/api/share-tokens" && req.method === "POST") {
+    const body = await readBody(req);
+    const { label, usage_limit } = JSON.parse(body || "{}");
+    const created = createToken({
+      label: typeof label === "string" ? label : "未命名",
+      usage_limit: typeof usage_limit === "number" ? usage_limit : 5,
+    });
+    res.writeHead(201, { ...CORS_HEADERS, "Content-Type": "application/json" });
+    res.end(JSON.stringify(created));
+    return;
+  }
+
+  // /api/share-tokens/:token — 禁用/启用/删除
+  const tokenMatch = path.match(/^\/api\/share-tokens\/([^/]+)$/);
+  if (tokenMatch) {
+    const t = tokenMatch[1];
+    if (req.method === "PATCH") {
+      const body = await readBody(req);
+      const { disabled } = JSON.parse(body || "{}");
+      const updated = disableToken(t, !!disabled);
+      if (!updated) {
+        sendJSON(res, 404, { error: "令牌不存在" });
+        return;
+      }
+      res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+      res.end(JSON.stringify(updated));
+      return;
+    }
+    if (req.method === "DELETE") {
+      const ok = deleteToken(t);
+      if (!ok) {
+        sendJSON(res, 404, { error: "令牌不存在" });
+        return;
+      }
+      res.writeHead(204, CORS_HEADERS);
+      res.end();
+      return;
+    }
+  }
+
+  sendJSON(res, 404, { error: "Not found" });
 }
 
 // ─── SSE 端点 ───

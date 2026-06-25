@@ -36,6 +36,30 @@ export interface LLMOutput {
   key_findings?: unknown[];
   threads?: unknown[];
   exploration_complete?: boolean;
+  // 终止信号（独立字段，不再寄生在 decision 里）
+  stop?: boolean;
+  stop_reason?: string;
+}
+
+// ─── 终止信号提取 ───
+// 优先读 stop 字段；回退兼容旧 LLM 在 decision 里塞 sufficient/stalemate 的残留
+export type StopSignalKind = "sufficient" | "stalemate" | null;
+
+export function extractStopSignal(parsed: LLMOutput): StopSignalKind {
+  // 1. 新协议：显式 stop 字段
+  if (parsed.stop === true) {
+    const reason = (parsed.stop_reason ?? "").toLowerCase();
+    if (reason.includes("stale") || reason.includes("block") || reason.includes("no_progress")) {
+      return "stalemate";
+    }
+    return "sufficient";
+  }
+
+  // 2. 回退兼容：旧 LLM 仍在 decision 里用 sufficient/stalemate
+  if (parsed.decision === "sufficient") return "sufficient";
+  if (parsed.decision === "stalemate") return "stalemate";
+
+  return null;
 }
 
 export interface ToolCallCandidate {
@@ -103,17 +127,22 @@ export function validateToolCalls(
 }
 
 // ─── 决策验证 ───
+// 注：decision 现在只承载探索策略（expand/deep_dive/verify）。
+// 终止信号已拆到独立的 stop 字段，由 extractStopSignal 处理。
+// 这里仍容忍旧 LLM 在 decision 里塞 sufficient/stalemate —— 钳制为默认策略 expand，
+// 真正的终止判断交给 extractStopSignal（它会同时识别新 stop 字段和旧 decision 残留）。
 
-const VALID_DECISIONS = ["expand", "deep_dive", "verify", "sufficient", "stalemate"];
+const VALID_STRATEGY_DECISIONS = ["expand", "deep_dive", "verify"];
 
 export function validateDecision(decision: string): string {
-  if (VALID_DECISIONS.includes(decision)) return decision;
+  if (VALID_STRATEGY_DECISIONS.includes(decision)) return decision;
 
   if (decision.includes("expand")) return "expand";
   if (decision.includes("dive")) return "deep_dive";
   if (decision.includes("verif")) return "verify";
-  if (decision.includes("sufficient")) return "sufficient";
-  if (decision.includes("stale")) return "stalemate";
+  // sufficient/stalemate 不再是合法策略 —— 钳制为 expand，终止信号走 extractStopSignal
+  if (decision.includes("sufficient")) return "expand";
+  if (decision.includes("stale")) return "expand";
 
   return "expand";
 }

@@ -62,6 +62,20 @@ export function ChatView({
                 })}
               </div>
             )}
+
+            {/* 思考中指示器 — 等待首个 SSE 事件 */}
+            {isProcessing && segments.length === 0 && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 px-4 py-2.5 rounded-2xl rounded-bl-md text-sm text-gray-500 flex items-center gap-2">
+                  <span className="inline-flex gap-1">
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </span>
+                  <span>思考中</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

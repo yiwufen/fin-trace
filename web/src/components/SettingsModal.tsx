@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { getSettings, updateSettings, validateKGEndpoint } from "../api";
-import type { SettingsResponse } from "../api";
+import { getSettings, updateSettings, validateKGEndpoint, listSessions } from "../api";
+import type { SettingsResponse, SessionSummary } from "../api";
 
 interface Props {
   open: boolean;
@@ -33,6 +33,12 @@ export function SettingsModal({ open, onClose }: Props) {
   const [kgApiKey, setKgApiKey] = useState("");
   const [kgApiKeyConfigured, setKgApiKeyConfigured] = useState(false);
 
+  // Web 公开访问
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [demoSessionId, setDemoSessionId] = useState("");
+  const [adminTokenConfigured, setAdminTokenConfigured] = useState(false);
+  const [adminToken, setAdminToken] = useState("");
+
   // ─── UI 状态 ───
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -55,8 +61,12 @@ export function SettingsModal({ open, onClose }: Props) {
         if (s.mcp.knowledge_graph_url) setKgUrl(s.mcp.knowledge_graph_url);
         if (s.mcp.transport) setTransport(s.mcp.transport);
         setKgApiKeyConfigured(s.mcp.api_key_configured);
+        setDemoSessionId(s.web.demo_session_id ?? "");
+        setAdminTokenConfigured(s.web.admin_token_configured);
       })
       .catch(() => {});
+    // 加载会话列表供 demo 选择
+    listSessions().then(setSessions).catch(() => setSessions([]));
   }, [open]);
 
   // ─── 保存 ───
@@ -76,6 +86,10 @@ export function SettingsModal({ open, onClose }: Props) {
           transport,
           ...(kgApiKey.trim() ? { api_key: kgApiKey.trim() } : {}),
         },
+        web: {
+          demo_session_id: demoSessionId || null,
+          ...(adminToken.trim() ? { admin_token: adminToken.trim() } : {}),
+        },
       });
       if (apiKey.trim()) {
         setApiKeyConfigured(true);
@@ -85,13 +99,17 @@ export function SettingsModal({ open, onClose }: Props) {
         setKgApiKeyConfigured(true);
         setKgApiKey("");
       }
+      if (adminToken.trim()) {
+        setAdminTokenConfigured(true);
+        setAdminToken("");
+      }
       setMessage({ type: "success", text: "配置已保存" });
     } catch (err) {
       setMessage({ type: "error", text: `保存失败：${(err as Error).message}` });
     } finally {
       setSaving(false);
     }
-  }, [provider, baseUrl, model, apiKey, kgUrl, transport, kgApiKey]);
+  }, [provider, baseUrl, model, apiKey, kgUrl, transport, kgApiKey, demoSessionId, adminToken]);
 
   // ─── 测试连通性 ───
   const handleValidate = useCallback(async () => {
@@ -297,6 +315,45 @@ export function SettingsModal({ open, onClose }: Props) {
                 {showKey ? "隐藏" : "显示"}
               </button>
             </div>
+          </div>
+        </fieldset>
+
+        {/* ─── Web 公开访问配置 ─── */}
+        <fieldset className="space-y-4">
+          <legend className="text-sm font-semibold text-gray-500 uppercase tracking-wide">公开访问</legend>
+
+          {/* 展示会话 Demo */}
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-gray-600">展示会话（Demo）</label>
+            <select
+              value={demoSessionId}
+              onChange={(e) => setDemoSessionId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="">未选择</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title} ({new Date(s.updated_at).toLocaleDateString()})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400">HR 通过分享链接可只读查看此会话（不计次数）</p>
+          </div>
+
+          {/* Admin Token */}
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-gray-600">
+              管理令牌（Admin Token）
+              {adminTokenConfigured && <span className="ml-2 text-xs text-green-600">已配置</span>}
+            </label>
+            <input
+              type="password"
+              value={adminToken}
+              onChange={(e) => setAdminToken(e.target.value)}
+              placeholder={adminTokenConfigured ? "输入新值以更新" : "留空则不启用门禁"}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-400">配置后管理端需 X-Admin-Token 头；公网部署建议设置</p>
           </div>
         </fieldset>
 

@@ -5,11 +5,14 @@ import type {
 } from "./types";
 import {
   listSessions, createSession, deleteSession as deleteSessionApi,
-  getSession, sendMessage, createChatSSEConnection,
+  getSession, sendMessage, createChatSSEConnection, getSessionStatus,
 } from "./api";
 import { SessionList } from "./components/SessionList";
 import { ChatView } from "./components/ChatView";
 import { SettingsModal } from "./components/SettingsModal";
+import { AdminGate } from "./components/AdminGate";
+import { HRView } from "./components/HRView";
+import { ShareTokenManager } from "./components/ShareTokenManager";
 
 const MAX_CACHED_SESSIONS = 10;
 
@@ -48,6 +51,7 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [segments, setSegments] = useState<TurnSegment[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   // ─── 工具函数 ───
 
@@ -267,6 +271,13 @@ export default function App() {
         d.messages.push(errMsg);
         finishTurn(sessionId);
       },
+
+      onConnectionLost: () => {
+        const d = sessionsRef.current.get(sessionId);
+        if (!d || !d.isProcessing) return;
+        buildFinalMessage(sessionId);
+        finishTurn(sessionId);
+      },
     });
 
     data.es = es;
@@ -311,7 +322,29 @@ export default function App() {
       sessionsRef.current.set(id, data);
     }
 
+    const data = sessionsRef.current.get(id);
+
+    // 本地检查：EventSource 已关闭但 isProcessing 仍为 true → 清理
+    if (data?.isProcessing && data.es?.readyState === EventSource.CLOSED) {
+      buildFinalMessage(id);
+      finishTurn(id);
+    }
+
     syncView(id);
+
+    // 远程验证：后端是否仍在处理（仅当本地显示 processing 时调用）
+    if (data?.isProcessing) {
+      getSessionStatus(id).then(({ running }) => {
+        if (!running) {
+          const d = sessionsRef.current.get(id);
+          if (d?.isProcessing) {
+            if (d.es) { d.es.close(); d.es = null; }
+            buildFinalMessage(id);
+            finishTurn(id);
+          }
+        }
+      }).catch(() => {});
+    }
 
     getSession(id)
       .then((session) => {
@@ -359,6 +392,13 @@ export default function App() {
 
   // ─── 渲染 ───
 
+  // 路由：/s/:token → HR 视图（无需 admin token）
+  const path = window.location.pathname;
+  const shareMatch = path.match(/^\/s\/([^/]+)$/);
+  if (shareMatch) {
+    return <HRView token={shareMatch[1]} />;
+  }
+
   if (!loaded) {
     return <div className="h-screen flex items-center justify-center text-gray-500">Loading...</div>;
   }
@@ -366,50 +406,63 @@ export default function App() {
   const isActiveProcessing = activeId ? isProcessing : false;
 
   return (
-    <div className="h-screen flex bg-gray-50">
-      <SessionList
-        sessions={sessions}
-        activeId={activeId}
-        onSelect={selectSession}
-        onCreate={handleCreate}
-        onDelete={handleDelete}
-        onRename={handleRename}
-      />
-      <main className="flex-1 flex flex-col min-w-0">
-        {/* 顶栏 — 设置入口 */}
-        <div className="flex items-center justify-end px-4 py-2 border-b border-gray-200 bg-white">
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
-            title="设置"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <span>设置</span>
-          </button>
-        </div>
-        {activeId ? (
-          <ChatView
-            key={activeId}
-            sessionId={activeId}
-            messages={chatMessages}
-            isProcessing={isActiveProcessing}
-            segments={segments}
-            onSend={handleSend}
-            onStop={handleStop}
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400">
-            <div className="text-center">
-              <p className="text-lg mb-2">Graph Explorer</p>
-              <p className="text-sm">选择一个会话或创建新会话开始探索</p>
-            </div>
+    <AdminGate>
+      <div className="h-screen flex bg-gray-50">
+        <SessionList
+          sessions={sessions}
+          activeId={activeId}
+          onSelect={selectSession}
+          onCreate={handleCreate}
+          onDelete={handleDelete}
+          onRename={handleRename}
+        />
+        <main className="flex-1 flex flex-col min-w-0">
+          {/* 顶栏 — 设置 + 分享入口 */}
+          <div className="flex items-center justify-end px-4 py-2 border-b border-gray-200 bg-white gap-4">
+            <button
+              onClick={() => setShareOpen(true)}
+              className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
+              title="分享链接"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+              <span>分享</span>
+            </button>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
+              title="设置"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span>设置</span>
+            </button>
           </div>
-        )}
-      </main>
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-    </div>
+          {activeId ? (
+            <ChatView
+              key={activeId}
+              sessionId={activeId}
+              messages={chatMessages}
+              isProcessing={isActiveProcessing}
+              segments={segments}
+              onSend={handleSend}
+              onStop={handleStop}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              <div className="text-center">
+                <p className="text-lg mb-2">Graph Explorer</p>
+                <p className="text-sm">选择一个会话或创建新会话开始探索</p>
+              </div>
+            </div>
+          )}
+        </main>
+        <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <ShareTokenManager open={shareOpen} onClose={() => setShareOpen(false)} />
+      </div>
+    </AdminGate>
   );
 }

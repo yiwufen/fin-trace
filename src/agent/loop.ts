@@ -44,6 +44,7 @@ import {
   fixLLMOutput,
   validateToolCalls,
   validateDecision,
+  extractStopSignal,
   detectDecisionLoop,
   applyLoopBreak,
   generateReliabilityNote,
@@ -55,6 +56,9 @@ import { readConfig, getApiKey } from "./config.js";
 import { createLlmClient } from "../llm/client.js";
 import type { MessageParam } from "../llm/types.js";
 import { categorize } from "../tool-categories.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("agent-loop");
 
 // ─── 常量 ───
 
@@ -228,7 +232,7 @@ async function executeToolCalls(
 
   // 辅助：执行单个工具调用
   async function executeOne(call: ToolCallCandidate): Promise<ToolResult> {
-    console.log(`[loop] executing tool: ${call.tool}`, JSON.stringify(call.args).slice(0, 100));
+    log.info({ tool: call.tool, args: JSON.stringify(call.args).slice(0, 100) }, "执行工具调用");
     return mcpClient.callTool(
       call.tool as McpToolName,
       call.args as unknown as ToolInput,
@@ -374,7 +378,7 @@ async function classifyBatchEvents(state: ExplorationState): Promise<void> {
     description: e.description.slice(0, 200),
   }));
 
-  console.log(`[loop] classifying ${input.length} events via LLM...`);
+  log.info({ count: input.length }, "开始批量分类事件");
 
   try {
     const llm = createLlmClient();
@@ -390,7 +394,7 @@ async function classifyBatchEvents(state: ExplorationState): Promise<void> {
 
     const usedTokens = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
     state.budget.used_tokens += usedTokens;
-    console.log(`[loop] classify completed: input_tokens=${response.usage?.input_tokens} output_tokens=${response.usage?.output_tokens}`);
+    log.info({ input_tokens: response.usage?.input_tokens, output_tokens: response.usage?.output_tokens }, "事件分类完成");
 
     const parsed = parseClassifyResponse(text, unclassified);
     let updated = 0;
@@ -401,9 +405,9 @@ async function classifyBatchEvents(state: ExplorationState): Promise<void> {
         updated++;
       }
     }
-    console.log(`[loop] classify updated: ${updated}/${unclassified.length} events`);
+    log.info({ updated, total: unclassified.length }, "事件分类结果");
   } catch (err) {
-    console.error("[loop] classify failed, keeping unknown:", String((err as Error)?.message ?? err));
+    log.warn({ err }, "事件分类失败，保持 unknown");
   }
 }
 
@@ -524,7 +528,7 @@ function extractClusterIds(result: ToolResult, known: Set<string>): void {
     }
   }
 
-  console.log(`[loop] extractClusterIds: +${added} from ${result.tool_name}, total known=${known.size}`);
+  log.debug({ added, tool_name: result.tool_name, known: known.size }, "cluster ID 提取");
 }
 
 // ─── 实体元信息提取 ───
@@ -938,14 +942,14 @@ function checkContextBudget(state: ExplorationState, systemPrompt: string, goal:
 
   // 100%+ 强制 FINALIZE
   if (ratio >= CONTEXT_FORCE_RATIO) {
-    console.log(`[loop] context at ${(ratio * 100).toFixed(0)}%, forced FINALIZE`);
+    log.warn({ ratio: (ratio * 100).toFixed(0) }, "上下文预算用尽，强制 FINALIZE");
     return true;
   }
 
   // 90%+ 警告
   if (ratio >= CONTEXT_WARN_RATIO) {
     state.token_warnings++;
-    console.log(`[loop] context at ${(ratio * 100).toFixed(0)}%, warning #${state.token_warnings}`);
+    log.warn({ ratio: (ratio * 100).toFixed(0), warning: state.token_warnings }, "上下文预算告警");
   }
 
   // 85%+ 压缩
@@ -957,11 +961,11 @@ function checkContextBudget(state: ExplorationState, systemPrompt: string, goal:
 
     // 压缩后仍 > 95% → FINALIZE
     if (afterRatio > 0.95) {
-      console.log(`[loop] context still at ${(afterRatio * 100).toFixed(0)}% after compression, triggering FINALIZE`);
+      log.warn({ afterRatio: (afterRatio * 100).toFixed(0) }, "压缩后上下文仍然超标，触发 FINALIZE");
       return true;
     }
 
-    console.log(`[loop] exploration_log compressed, context ratio ${(ratio * 100).toFixed(0)}% → ${(afterRatio * 100).toFixed(0)}%`);
+    log.info({ before: (ratio * 100).toFixed(0), after: (afterRatio * 100).toFixed(0) }, "exploration_log 已压缩");
   }
 
   return false;
@@ -982,6 +986,9 @@ export async function runExploration(
   initialState?: ExplorationState,
 ): Promise<ExplorationResult> {
   const state = initialState ?? initState(input);
+  const sl = input.session_id
+    ? log.child({ sessionId: input.session_id })
+    : log;
   const llm = createLlmClient();
   const mcpClient = new KgMcpClient();
 
@@ -998,7 +1005,13 @@ export async function runExploration(
 
   try {
     while (true) {
-      console.log(`[loop] step=${state.step_count} phase=${state.phase} visited=${state.visited.size} frontier=${state.frontier.length} insights=${state.key_insights.length} archive=${state.raw_event_archive.length} budget=${state.budget.used_tokens}/${state.budget.exploring_limit}`);
+      sl.info(
+        { step: state.step_count, phase: state.phase, visited: state.visited.size,
+          frontier: state.frontier.length, insights: state.key_insights.length,
+          archive: state.raw_event_archive.length,
+          budget_used: state.budget.used_tokens, budget_limit: state.budget.exploring_limit },
+        "loop iteration",
+      );
 
       if (state.phase === "FINALIZE") {
         finalizeAttempts++;
@@ -1031,7 +1044,7 @@ export async function runExploration(
       // ─── 3. 调用 LLM ───
       let llmResponse: string;
       try {
-        console.log(`[loop] calling LLM...`);
+        sl.info("调用 LLM");
         const response = await llm.messages.create({
           model: readConfig().llm.model,
           max_tokens: readConfig().llm.max_tokens,
@@ -1044,9 +1057,10 @@ export async function runExploration(
 
         const inputTokens = response.usage?.input_tokens ?? 0;
         const outputTokens = response.usage?.output_tokens ?? 0;
-        console.log(`[loop] LLM responded: input=${inputTokens} output=${outputTokens} text_len=${llmResponse.length}`);
+        sl.info({ input: inputTokens, output: outputTokens, text_len: llmResponse.length }, "LLM 响应");
         state.budget.used_tokens += inputTokens + outputTokens;
       } catch (err) {
+        sl.error({ err, phase: state.phase }, "LLM 调用失败");
         if (state.phase === "FINALIZE") {
           state.reliability_note = "FINALIZE LLM 调用失败，使用原始 findings，无 Event Thread";
           state.final_findings = deduplicateFindings(state.key_insights);
@@ -1093,7 +1107,7 @@ export async function runExploration(
       if (state.phase === "EXPLORING") {
         await handleExploring(parsed, state, mcpClient, messages, input, onStep);
         const newPhase = checkPhaseTransition(state);
-        console.log(`[loop] phase transition: ${state.phase} → ${newPhase}`);
+        sl.info({ from: state.phase, to: newPhase }, "阶段切换");
         state.phase = newPhase;
       } else {
         handleFinalize(parsed, state, onStep);
@@ -1119,13 +1133,25 @@ async function handleExploring(
   input: ExplorationInput,
   onStep?: (event: StepEvent) => void,
 ): Promise<void> {
-  const decision = validateDecision(parsed.decision ?? "expand");
-  const effectiveDecision = state.force_strategy ?? decision;
+  // 决策解析（两层）:
+  //  - strategyDecision: 纯探索策略（expand/deep_dive/verify），由 decision 字段决定
+  //  - stopSignal: 终止意图（sufficient/stalemate），由独立的 stop 字段决定
+  //                （extractStopSignal 兼容旧 LLM 在 decision 里残留的 sufficient/stalemate）
+  // effectiveDecision 合成: force_strategy > stopSignal > strategyDecision
+  // 这样 last_n_decisions 的语义不变，下游 P3/P4/detectDecisionLoop/shouldExtractFindings 全部无感。
+  const strategyDecision = validateDecision(parsed.decision ?? "expand");
+  const stopSignal = extractStopSignal(parsed);
+  const effectiveDecision = state.force_strategy ?? stopSignal ?? strategyDecision;
 
   const rawCalls = parsed.tool_calls ?? [];
   const validCalls = validateToolCalls(rawCalls, state.known_clusters);
 
-  console.log(`[loop] decision=${effectiveDecision} raw_calls=${rawCalls.length} valid_calls=${validCalls.length} raw_tools=${rawCalls.map((c: ToolCallCandidate) => c.tool).join(",")}`);
+  log.info(
+    { strategy: strategyDecision, stop: stopSignal, decision: effectiveDecision,
+      rawCalls: rawCalls.length, validCalls: validCalls.length,
+      rawTools: rawCalls.map((c: ToolCallCandidate) => c.tool).join(",") },
+    "决策统计",
+  );
 
   // 并行预检
   const parallelGuard = checkParallelBudget(validCalls, state);
@@ -1133,7 +1159,7 @@ async function handleExploring(
     ? (parallelGuard.keepHighestPriority ? [parallelGuard.keepHighestPriority] : [])
     : validCalls;
 
-  console.log(`[loop] parallelGuard: reject=${parallelGuard.reject} callsToExecute=${callsToExecute.length}`);
+  log.info({ reject: parallelGuard.reject, callsToExecute: callsToExecute.length }, "并行预检");
 
   // 执行工具调用
   const results = await executeToolCalls(callsToExecute, mcpClient, state);
@@ -1215,11 +1241,11 @@ async function handleExploring(
   let newFindingsCount = 0;
   if (parsed.new_findings && Array.isArray(parsed.new_findings) && parsed.new_findings.length > 0) {
     const rawFindings = parsed.new_findings as RawFinding[];
-    console.log(`[loop] processing ${rawFindings.length} new_findings`);
+    log.info({ count: rawFindings.length }, "处理 new_findings");
     processNewFindings(rawFindings, state);
     newFindingsCount = rawFindings.length;
-  } else if (parsed.decision === "sufficient" || parsed.decision === "stalemate") {
-    console.log(`[loop] decision=${parsed.decision} but no new_findings`);
+  } else if (stopSignal !== null) {
+    log.info({ stop: stopSignal }, "有终止信号但无 new_findings");
   }
 
   // 决策历史

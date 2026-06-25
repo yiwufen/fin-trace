@@ -35,6 +35,7 @@ import {
   broadcastTaskFailed,
   closeAllConnections,
 } from "./sse.js";
+import { readSettings } from "../settings-store.js";
 
 // ─── JSON-RPC helpers ───
 
@@ -148,6 +149,7 @@ async function handleTasksSend(
   const explorationInput: ExplorationInput = {
     goal: extracted.goal,
     seed_entities: extracted.seed_entities,
+    session_id: taskId,
     max_depth: extracted.max_depth,
     time_range: extracted.time_range,
   };
@@ -253,6 +255,7 @@ async function handleTasksSendSubscribe(
   const explorationInput: ExplorationInput = {
     goal: extracted.goal,
     seed_entities: extracted.seed_entities,
+    session_id: taskId,
     max_depth: extracted.max_depth,
     time_range: extracted.time_range,
   };
@@ -377,6 +380,17 @@ export async function handleA2ARequest(
   if (req.method !== "POST") {
     sendJson(res, 405, { error: "Method not allowed, use POST" });
     return true;
+  }
+
+  // Bearer 鉴权：settings 未配置 inbound_token 时放行（本地开发）；
+  // 配置后校验 Authorization: Bearer <token>
+  const expectedToken = readSettings().a2a?.inbound_token;
+  if (expectedToken) {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${expectedToken}`) {
+      sendJson(res, 401, { error: "Unauthorized: invalid or missing bearer token" });
+      return true;
+    }
   }
 
   let body: string;

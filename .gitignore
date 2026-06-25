@@ -9,3 +9,5 @@ data/
 e2e-*.json
 e2e-*.log
 probe-*.json
+fin-trace.tar.gz
+deploy-image.sh

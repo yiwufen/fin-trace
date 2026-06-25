@@ -28,6 +28,19 @@ export interface SettingsStore {
     transport?: "streamable-http" | "sse";
     api_key?: string;
   };
+  // A2A 入站鉴权 token：未配置则不鉴权（本地开发）；
+  // 配置后 /a2a 端点校验 Authorization: Bearer <inbound_token>
+  a2a?: {
+    inbound_token?: string;
+  };
+  // Web 公开访问相关
+  // demo_session_id: 固定为 HR 展示的「已完成会话」(只读，不计次)
+  // admin_token: 管理 /api/sessions*、/api/settings* 的门禁 token；
+  //   未配置则不鉴权（本地开发）。公网部署建议设置。
+  web?: {
+    demo_session_id?: string;
+    admin_token?: string;
+  };
 }
 
 const DATA_DIR = resolve(process.cwd(), "data");

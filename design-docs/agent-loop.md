@@ -65,11 +65,13 @@
 | # | 条件 | 说明 |
 |---|------|------|
 | 0 | EXPLORING 预算耗尽 | v2 新增。100k 用完即切 |
-| 1 | LLM decision = sufficient | LLM 认为信息充足 |
+| 1 | LLM stop = true（合成 sufficient） | LLM 认为信息充足。终止信号走独立的 `stop` 字段，`extractStopSignal` 兼容旧 LLM 在 `decision` 里残留的 sufficient/stalemate |
 | 2 | 连续 N 步无新 finding | 边际递减检测 |
 | 3 | frontier 为空 | 没有新的探索方向 |
 | 4 | step_count >= max_steps | 步数上限 |
 | 5 | depth >= max_depth | 深度上限 |
+
+> 注：`decision` 字段只承载探索策略（expand/deep_dive/verify），终止意图（sufficient/stalemate）由独立的 `stop`/`stop_reason` 字段表达。`handleExploring` 通过 `extractStopSignal` 把 stop 信号合成为 `effectiveDecision`（sufficient/stalemate），`last_n_decisions` 的下游语义保持不变。
 
 ---
 

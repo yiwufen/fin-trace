@@ -1,0 +1,45 @@
+# fin-trace Docker Compose
+#
+# 两种用法：
+#   本地构建:   docker compose up -d --build     （build 段生效）
+#   预构建镜像: 先 docker load < fin-trace.tar.gz，再 docker compose up -d
+#               （image 段生效，服务器无代理/无源码时用这条）
+#
+# 映射宿主机 3001 → 容器 3001（避开 443 上的 KG MCP 服务）
+# data/ 持久化：sessions / settings.json / share-tokens.json
+
+services:
+  fin-trace:
+    image: fin-trace:latest
+    container_name: fin-trace
+    build:
+      context: .
+      # 本地构建期可选：服务器网络受限时用宿主机 :7890 代理
+      # network: host
+      # args:
+      #   - BUILD_PROXY=http://127.0.0.1:7890
+    restart: unless-stopped
+    # 以宿主机 deployer 用户(uid 1000)运行，使 data/ 文件 deployer 可直接读写
+    user: "1000:1000"
+    ports:
+      - "3001:3001"
+    environment:
+      # 公网访问的对外地址（用于 Agent Card 等）
+      - BASE_URL=http://182.61.1.77:3001
+      - HEADLESS=true
+      - PORT=3001
+    volumes:
+      # 运行时配置与数据持久化到宿主机，重建镜像不丢失
+      # data/ 含 sessions / settings.json(LLM+MCP+admin_token) / share-tokens.json
+      - ./data:/app/data
+      # config.json（LLM/MCP 基础配置）单独挂载，避免重建容器丢失
+      - ./config.json:/app/config.json
+    networks:
+      - default
+      - knowledge-net
+
+networks:
+  # 加入 KG 的外部网络，使 knowledge-caddy 能用容器名 fin-trace:3001 反代（HTTPS）
+  knowledge-net:
+    external: true
+    name: repo_knowledge-net
