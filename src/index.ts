@@ -63,8 +63,8 @@ async function main() {
     const token = randomBytes(18).toString("base64url");
     settings.web = { ...settings.web, admin_token: token };
     writeSettings(settings);
-    log.info({ admin_token: token }, "首次部署：已自动生成 admin_token（用于管理端访问）");
-    log.info({ hint: `管理端深链：/?admin=${token}` }, "复制此链接登录管理后台");
+    log.info("首次部署：已自动生成 admin_token（用于管理端访问）");
+    log.info("请通过管理端登录页面输入令牌访问后台");
   }
 
   // 初始化 MCP Server

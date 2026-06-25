@@ -158,6 +158,24 @@ export async function appendChatMessages(
   await writeFile(sessionPath(sessionId), JSON.stringify(session, null, 2), "utf-8");
 }
 
+/**
+ * 原子操作：同时更新标题和追加消息，避免竞态覆盖。
+ * 用于自动命名场景——标题更新和用户消息持久化必须在同一次读写中完成。
+ */
+export async function updateSessionTitleAndAppend(
+  sessionId: string,
+  newTitle: string,
+  newMessages: ChatMessage[],
+): Promise<void> {
+  const session = await getSession(sessionId);
+  if (!session) return;
+
+  session.title = newTitle;
+  session.messages.push(...newMessages);
+  session.updated_at = new Date().toISOString();
+  await writeFile(sessionPath(sessionId), JSON.stringify(session, null, 2), "utf-8");
+}
+
 // ─── 探索记录操作 ───
 
 export function createExploration(

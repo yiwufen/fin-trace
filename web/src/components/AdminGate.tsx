@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getAdminToken, setAdminToken, checkAdminRequired } from "../api";
+import { login, checkAuth } from "../api";
 
 interface Props {
   children: React.ReactNode;
@@ -9,7 +9,7 @@ type GateState = "checking" | "required" | "open";
 
 /**
  * 后端配置了 admin_token 时，要求输入管理令牌才能进入管理 UI。
- * 支持 ?admin=<token> 深链自动登录。
+ * 通过 httpOnly Cookie 管理认证状态（XSS 无法窃取）。
  * 后端未配置 admin_token（本地开发）时直接放行。
  */
 export function AdminGate({ children }: Props) {
@@ -17,26 +17,13 @@ export function AdminGate({ children }: Props) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // 启动时判断：后端是否需要门禁，以及本地是否已有有效 token
   useEffect(() => {
-    // 深链登录：?admin=<token>
-    const params = new URLSearchParams(window.location.search);
-    const deepToken = params.get("admin");
-    if (deepToken) {
-      setAdminToken(deepToken);
-      // 清掉 url 中的 token，避免泄露
-      const url = new URL(window.location.href);
-      url.searchParams.delete("admin");
-      window.history.replaceState({}, "", url.toString());
-    }
-
-    checkAdminRequired().then((required) => {
-      if (!required) {
+    checkAuth().then((status) => {
+      if (!status.required) {
+        // 后端未配置 admin_token，直接放行
         setState("open");
-        return;
-      }
-      // 后端需要门禁 — 检查本地是否已有 token（已登录过）
-      if (getAdminToken()) {
+      } else if (status.authenticated) {
+        // Cookie 中已有有效 token
         setState("open");
       } else {
         setState("required");
@@ -46,14 +33,15 @@ export function AdminGate({ children }: Props) {
 
   const handleSubmit = useCallback(async () => {
     setError(null);
-    setAdminToken(input.trim());
-    // 用新 token 验证
-    const required = await checkAdminRequired();
-    if (required) {
-      // 仍然 401 → token 错误
+    try {
+      const result = await login(input.trim());
+      if (result.ok) {
+        setState("open");
+      } else {
+        setError("令牌无效");
+      }
+    } catch (err) {
       setError("令牌无效");
-    } else {
-      setState("open");
     }
   }, [input]);
 

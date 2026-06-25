@@ -6,13 +6,15 @@ import type {
 import {
   listSessions, createSession, deleteSession as deleteSessionApi,
   getSession, sendMessage, createChatSSEConnection, getSessionStatus, cancelExploration,
+  AuthError, setAuthLostHandler, logout,
 } from "./api";
 import { SessionList } from "./components/SessionList";
 import { ChatView } from "./components/ChatView";
 import { SettingsModal } from "./components/SettingsModal";
 import { AdminGate } from "./components/AdminGate";
-import { HRView } from "./components/HRView";
+import { ShareView } from "./components/ShareView";
 import { ShareTokenManager } from "./components/ShareTokenManager";
+import { AuthOverlay } from "./components/AuthOverlay";
 
 const MAX_CACHED_SESSIONS = 10;
 
@@ -52,6 +54,23 @@ export default function App() {
   const [segments, setSegments] = useState<TurnSegment[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [authLost, setAuthLost] = useState(false);
+
+  // ─── 全局 401 拦截：token 失效时弹出重登浮层 ───
+  useEffect(() => {
+    setAuthLostHandler(() => {
+      logout();
+      // 关闭活跃的 SSE 连接，避免其 error 回调干扰
+      const activeId = activeIdRef.current;
+      if (activeId) {
+        const data = sessionsRef.current.get(activeId);
+        if (data?.es) { data.es.close(); data.es = null; }
+        if (data) { data.isProcessing = false; data.segments = []; }
+      }
+      setAuthLost(true);
+    });
+    return () => setAuthLostHandler(null as unknown as (() => void));
+  }, []);
 
   // ─── 工具函数 ───
 
@@ -287,6 +306,7 @@ export default function App() {
 
     // 发送 HTTP 请求
     sendMessage(sessionId, text).catch((err) => {
+      if (err instanceof AuthError) return; // 401 已由全局处理，避免干扰浮层
       console.error("[chat] send error:", err);
       finishTurn(sessionId);
     });
@@ -411,11 +431,11 @@ export default function App() {
 
   // ─── 渲染 ───
 
-  // 路由：/s/:token → HR 视图（无需 admin token）
+  // 路由：/s/:token → 访客视图（无需 admin token）
   const path = window.location.pathname;
   const shareMatch = path.match(/^\/s\/([^/]+)$/);
   if (shareMatch) {
-    return <HRView token={shareMatch[1]} />;
+    return <ShareView token={shareMatch[1]} />;
   }
 
   if (!loaded) {
@@ -481,6 +501,7 @@ export default function App() {
         </main>
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <ShareTokenManager open={shareOpen} onClose={() => setShareOpen(false)} />
+        {authLost && <AuthOverlay onLoginSuccess={() => setAuthLost(false)} />}
       </div>
     </AdminGate>
   );

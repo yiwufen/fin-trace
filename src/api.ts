@@ -19,8 +19,8 @@
 //   公共（无需 admin token）:
 //   GET  /api/public/demo               — 展示会话（只读，不计次）
 //   GET  /api/public/token/:token       — 令牌信息（只读，不计次）
-//   POST /api/public/token/:token/chat  — HR 发消息（计次）
-//   GET  /api/public/token/:token/stream — HR SSE
+//   POST /api/public/token/:token/chat  — 访客发消息（计次）
+//   GET  /api/public/token/:token/stream — 访客 SSE
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -38,6 +38,7 @@ import {
   completeExploration,
   failExploration,
   appendChatMessages,
+  updateSessionTitleAndAppend,
 } from "./session-store.js";
 import {
   listTokens,
@@ -46,7 +47,12 @@ import {
   deleteToken,
   getToken,
   incrementUsage,
-  ensureHrSession,
+  createTokenSession,
+  listTokenSessions,
+  getTokenSession,
+  deleteTokenSession,
+  getAllTokenSessions,
+  clearTokenSessions,
 } from "./share-store.js";
 import { handleUserMessage } from "./chat/loop.js";
 import type { ChatMessage } from "./chat/types.js";
@@ -79,15 +85,16 @@ function removeSSEConnection(sessionId: string, res: ServerResponse): void {
 }
 
 function broadcastSSE(sessionId: string, eventType: string, data: unknown): void {
-  // 写入缓冲（新 SSE 连接可重放）
-  let buffer = stepBuffers.get(sessionId);
-  if (!buffer) {
-    buffer = [];
-    stepBuffers.set(sessionId, buffer);
+  // 仅缓冲关键事件用于 SSE 重放（text_delta/tool_start/tool_result 量大且不需重放）
+  if (eventType === "step" || eventType === "finalize" || eventType === "complete" || eventType === "message_complete") {
+    let buffer = stepBuffers.get(sessionId);
+    if (!buffer) {
+      buffer = [];
+      stepBuffers.set(sessionId, buffer);
+    }
+    buffer.push({ eventType, data });
+    if (buffer.length > 50) buffer.splice(0, buffer.length - 50);
   }
-  buffer.push({ eventType, data });
-  // 只缓冲 step/finalize 事件，complete/error/cancelled 不需要
-  if (buffer.length > 50) buffer.splice(0, buffer.length - 50);
 
   // 推送给已连接的客户端
   const set = sseConnections.get(sessionId);
@@ -117,19 +124,48 @@ const stateCache = new Map<string, ExplorationState>();
 
 // ─── 辅助函数 ───
 
-/** 从 URL query string 中提取指定参数值（不引入 URL 模块依赖） */
-function parseQueryParam(url: string, key: string): string | undefined {
-  const qIdx = url.indexOf("?");
-  if (qIdx === -1) return undefined;
-  const qs = url.slice(qIdx + 1);
-  for (const part of qs.split("&")) {
+/** 从 Cookie 头中提取指定名称的值 */
+function parseCookie(cookieHeader: string, name: string): string | undefined {
+  for (const part of cookieHeader.split(";")) {
     const eqIdx = part.indexOf("=");
     if (eqIdx === -1) continue;
-    const k = decodeURIComponent(part.slice(0, eqIdx));
-    const v = decodeURIComponent(part.slice(eqIdx + 1));
-    if (k === key) return v;
+    const k = part.slice(0, eqIdx).trim();
+    const v = part.slice(eqIdx + 1).trim();
+    if (k === name) return decodeURIComponent(v);
   }
   return undefined;
+}
+
+/** 从请求中提取 admin token（优先级：Cookie > X-Admin-Token header） */
+function extractAdminToken(req: IncomingMessage): string | undefined {
+  // 1. httpOnly Cookie（浏览器自动携带，XSS 无法读取）
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    const fromCookie = parseCookie(cookieHeader, "fin-trace-admin-token");
+    if (fromCookie) return fromCookie;
+  }
+  // 2. X-Admin-Token header（兼容 API 客户端直接调用）
+  const fromHeader = req.headers["x-admin-token"];
+  if (typeof fromHeader === "string" && fromHeader.length > 0) return fromHeader;
+  return undefined;
+}
+
+/** 设置认证 Cookie（httpOnly + SameSite=Strict，生产环境加 Secure） */
+function setAuthCookie(res: ServerResponse, token: string): void {
+  const isSecure = process.env.NODE_ENV === "production";
+  const parts = [
+    `fin-trace-admin-token=${encodeURIComponent(token)}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    "Path=/",
+  ];
+  if (isSecure) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+/** 清除认证 Cookie */
+function clearAuthCookie(res: ServerResponse): void {
+  res.setHeader("Set-Cookie", "fin-trace-admin-token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
 }
 
 // ─── JSON 解析辅助 ───
@@ -202,22 +238,24 @@ export async function handleApiRequest(
   }
 
   // ─── 公共命名空间（无需 admin token）───
-  // HR 通过分享链接访问，仅暴露 demo 查看与限次聊天
+  // 访客通过分享链接访问，仅暴露 demo 查看与限次聊天
   if (url.startsWith("/api/public/")) {
     await handlePublic(req, res);
     return true;
   }
 
-  // ─── admin 门禁：配置了 admin_token 后，管理端需 X-Admin-Token 头 ───
+  // ─── 认证端点（无需 admin token）───
+  if (url.startsWith("/api/auth/")) {
+    await handleAuth(req, res);
+    return true;
+  }
+
+  // ─── admin 门禁：配置了 admin_token 后，管理端需认证 ───
   // 影响 /api/sessions*、/api/settings*、/api/share-tokens*
-  // SSE 端点兼容：浏览器 EventSource 不支持自定义头，允许通过 query parameter 传递 token
+  // 认证来源优先级：httpOnly Cookie > X-Admin-Token header
   const adminToken = readSettings().web?.admin_token;
   if (adminToken) {
-    let provided = req.headers["x-admin-token"];
-    // SSE 回退：从 URL query parameter 读取 admin_token
-    if (!provided && matchRoute(url).action === "stream") {
-      provided = parseQueryParam(url, "admin_token");
-    }
+    const provided = extractAdminToken(req);
     if (provided !== adminToken) {
       sendJSON(res, 401, { error: "Unauthorized: invalid or missing admin token" });
       return true;
@@ -247,7 +285,10 @@ export async function handleApiRequest(
     // /api/sessions — 列表 / 创建
     if (!match.sessionId) {
       if (req.method === "GET") {
-        const sessions = await listSessions();
+        const allSessions = await listSessions();
+        // 排除所有分享链接的访客会话，避免污染管理端列表
+        const tokenSessionIds = new Set(listTokens().flatMap((t) => t.session_ids));
+        const sessions = allSessions.filter((s) => !tokenSessionIds.has(s.id));
         res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
         res.end(JSON.stringify(sessions));
         return true;
@@ -526,6 +567,59 @@ function handleCancel(sessionId: string, res: ServerResponse): void {
   sendJSON(res, 200, { status: "cancelled" });
 }
 
+// ─── 认证端点 ───
+
+async function handleAuth(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const url = req.url ?? "/";
+  const path = url.split("?")[0];
+
+  // GET /api/auth/status — 返回认证状态（无需鉴权）
+  if (path === "/api/auth/status" && req.method === "GET") {
+    const configuredToken = readSettings().web?.admin_token;
+    if (!configuredToken) {
+      // 未配置 admin_token：本地开发模式，始终放行
+      sendJSON(res, 200, { required: false, authenticated: true });
+      return;
+    }
+    const provided = extractAdminToken(req);
+    sendJSON(res, 200, {
+      required: true,
+      authenticated: provided === configuredToken,
+    });
+    return;
+  }
+
+  // POST /api/auth/login — 验证令牌并设置 Cookie
+  if (path === "/api/auth/login" && req.method === "POST") {
+    const configuredToken = readSettings().web?.admin_token;
+    if (!configuredToken) {
+      sendJSON(res, 200, { ok: true, required: false });
+      return;
+    }
+    const body = await readBody(req);
+    const { token } = JSON.parse(body || "{}");
+    if (!token || typeof token !== "string" || token.trim() !== configuredToken) {
+      sendJSON(res, 401, { error: "令牌无效" });
+      return;
+    }
+    setAuthCookie(res, configuredToken);
+    sendJSON(res, 200, { ok: true });
+    return;
+  }
+
+  // POST /api/auth/logout — 清除 Cookie
+  if (path === "/api/auth/logout" && req.method === "POST") {
+    clearAuthCookie(res);
+    sendJSON(res, 200, { ok: true });
+    return;
+  }
+
+  sendJSON(res, 404, { error: "Not found" });
+}
+
 // ─── 设置 ───
 
 async function handleSettings(
@@ -793,8 +887,9 @@ async function handleChat(
     return;
   }
 
-  const body = await readBody(req);
-  const { message, mode } = JSON.parse(body || "{}");
+  // 支持预读取 body（handlePublicChat 已读取，注入到 _preReadBody）
+  const rawBody: string = (req as unknown as Record<string, unknown>)._preReadBody as string ?? await readBody(req);
+  const { message, mode } = JSON.parse(rawBody || "{}");
 
   if (!message || typeof message !== "string" || message.trim().length === 0) {
     sendJSON(res, 400, { error: "message is required" });
@@ -813,33 +908,39 @@ async function handleChat(
   const history: ChatMessage[] = session.messages ?? [];
   const chatSessionId = sessionId;
 
-  // 首次聊天时自动更新会话标题
-  if (history.length === 0 && session.title === "新会话") {
-    const newTitle = message.trim().slice(0, 40);
-    updateSession(sessionId, { title: newTitle }).catch((err) => {
-      log.warn({ err, sessionId }, "自动更新会话标题失败");
-    });
-  }
+  // 首次聊天时自动更新会话标题（匹配默认标题模式）
+  const isDefaultTitle = session.title === "新会话" || /^访客-/.test(session.title);
 
   runningExplorations.set(sessionId, {
     explorationId: `chat_${Date.now()}`,
     abortController: new AbortController(),
   });
 
+  // 新 turn 开始时清空旧缓冲
+  stepBuffers.delete(sessionId);
+
   // 202 Accepted — 异步处理
   res.writeHead(202, { ...CORS_HEADERS, "Content-Type": "application/json" });
   res.end(JSON.stringify({ status: "accepted" }));
 
-  // 立即持久化用户消息：防止用户在 AI turn 期间刷新页面导致消息丢失
+  // 立即持久化用户消息 + 可选的标题更新（必须在同一次文件写入中完成，避免竞态覆盖）
   const userMsg: ChatMessage = {
     role: "user",
     content: message.trim(),
     created_at: new Date().toISOString(),
   };
 
-  appendChatMessages(chatSessionId, [userMsg]).catch((err) => {
-    log.warn({ err, sessionId }, "持久化用户消息失败");
-  });
+  // 原子地：追加用户消息 + 可能更新标题
+  if (isDefaultTitle) {
+    const newTitle = message.trim().slice(0, 40);
+    updateSessionTitleAndAppend(chatSessionId, newTitle, [userMsg]).catch((err) => {
+      log.warn({ err, sessionId }, "持久化用户消息+标题失败");
+    });
+  } else {
+    appendChatMessages(chatSessionId, [userMsg]).catch((err) => {
+      log.warn({ err, sessionId }, "持久化用户消息失败");
+    });
+  }
 
   handleUserMessage(history, message.trim(), (eventType: string, data: unknown) =>
     broadcastSSE(chatSessionId, eventType, data),
@@ -864,7 +965,7 @@ async function handleChat(
 }
 
 // ─── 公共命名空间 ───
-// HR 通过分享链接访问：查看 demo（只读不计次）+ 限次聊天
+// 访客通过分享链接访问：查看 demo（只读不计次）+ 限次聊天 + 多会话管理
 
 async function handlePublic(
   req: IncomingMessage,
@@ -907,14 +1008,14 @@ async function handlePublic(
     return;
   }
 
-  // POST /api/public/token/:token/chat — HR 发消息（计次）
+  // POST /api/public/token/:token/chat — 访客发消息（计次，需 session_id）
   const chatMatch = path.match(/^\/api\/public\/token\/([^/]+)\/chat$/);
   if (chatMatch && req.method === "POST") {
     await handlePublicChat(chatMatch[1], req, res);
     return;
   }
 
-  // GET /api/public/token/:token/stream — HR SSE
+  // GET /api/public/token/:token/stream — 访客 SSE（需 session query param）
   const streamMatch = path.match(/^\/api\/public\/token\/([^/]+)\/stream$/);
   if (streamMatch && req.method === "GET") {
     const t = getToken(streamMatch[1]);
@@ -922,19 +1023,99 @@ async function handlePublic(
       sendJSON(res, 404, { error: "链接无效或已禁用" });
       return;
     }
-    const sessionId = await ensureHrSession(t.token);
+    // 从 query string 中提取 session id
+    const query = url.split("?")[1] ?? "";
+    const params = new URLSearchParams(query);
+    const sessionId = params.get("session");
     if (!sessionId) {
-      sendJSON(res, 404, { error: "无法创建会话" });
+      sendJSON(res, 400, { error: "缺少 session 参数" });
+      return;
+    }
+    // 验证 session 属于该 token
+    const owner = await getTokenSession(t.token, sessionId);
+    if (!owner) {
+      sendJSON(res, 404, { error: "会话不存在" });
       return;
     }
     handleSSE(sessionId, req, res);
     return;
   }
 
+  // ─── 访客多会话管理 ───
+
+  // GET /api/public/token/:token/sessions — 列出所有会话
+  const sessionsListMatch = path.match(/^\/api\/public\/token\/([^/]+)\/sessions$/);
+  if (sessionsListMatch && req.method === "GET") {
+    const t = getToken(sessionsListMatch[1]);
+    if (!t || t.disabled) {
+      sendJSON(res, 404, { error: "链接无效或已禁用" });
+      return;
+    }
+    const sessions = await listTokenSessions(t.token);
+    res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+    res.end(JSON.stringify(sessions));
+    return;
+  }
+
+  // POST /api/public/token/:token/sessions — 创建新会话
+  if (sessionsListMatch && req.method === "POST") {
+    const t = getToken(sessionsListMatch[1]);
+    if (!t || t.disabled) {
+      sendJSON(res, 404, { error: "链接无效或已禁用" });
+      return;
+    }
+    const body = await readBody(req);
+    const { title } = JSON.parse(body || "{}");
+    const session = await createTokenSession(t.token, typeof title === "string" ? title : undefined);
+    if (!session) {
+      sendJSON(res, 500, { error: "创建会话失败" });
+      return;
+    }
+    res.writeHead(201, { ...CORS_HEADERS, "Content-Type": "application/json" });
+    res.end(JSON.stringify({ id: session.id, title: session.title, created_at: session.created_at }));
+    return;
+  }
+
+  // GET /api/public/token/:token/sessions/:sessionId — 获取会话消息
+  const sessionDetailMatch = path.match(/^\/api\/public\/token\/([^/]+)\/sessions\/([^/]+)$/);
+  if (sessionDetailMatch && req.method === "GET") {
+    const t = getToken(sessionDetailMatch[1]);
+    if (!t || t.disabled) {
+      sendJSON(res, 404, { error: "链接无效或已禁用" });
+      return;
+    }
+    const session = await getTokenSession(t.token, sessionDetailMatch[2]);
+    if (!session) {
+      sendJSON(res, 404, { error: "会话不存在" });
+      return;
+    }
+    sendJSON(res, 200, {
+      messages: session.messages ?? [],
+      processing: runningExplorations.has(sessionDetailMatch[2]),
+    });
+    return;
+  }
+
+  // DELETE /api/public/token/:token/sessions/:sessionId — 删除会话
+  if (sessionDetailMatch && req.method === "DELETE") {
+    const t = getToken(sessionDetailMatch[1]);
+    if (!t || t.disabled) {
+      sendJSON(res, 404, { error: "链接无效或已禁用" });
+      return;
+    }
+    const ok = await deleteTokenSession(t.token, sessionDetailMatch[2]);
+    if (!ok) {
+      sendJSON(res, 404, { error: "会话不存在" });
+      return;
+    }
+    sendJSON(res, 200, { ok: true });
+    return;
+  }
+
   sendJSON(res, 404, { error: "Not found" });
 }
 
-/** HR 聊天：先校验令牌 + 剩余次数 + 并发，再复用 handleChat。
+/** 访客聊天：先校验令牌 + 剩余次数 + session_id + 并发，再复用 handleChat。
  *  计次在确认可派发后执行，避免并发拒绝（409）浪费配额。 */
 async function handlePublicChat(
   token: string,
@@ -951,22 +1132,39 @@ async function handlePublicChat(
     return;
   }
 
-  // 懒创建 HR 会话（在计次前解析，便于并发检查）
-  const sessionId = await ensureHrSession(t.token);
-  if (!sessionId) {
-    sendJSON(res, 500, { error: "无法创建会话" });
-    return;
+  const body = await readBody(req);
+  const { message, session_id } = JSON.parse(body || "{}");
+
+  // 解析或创建 session
+  let sessionId: string;
+  if (typeof session_id === "string" && session_id.length > 0) {
+    // 验证 session 归属
+    if (!t.session_ids.includes(session_id)) {
+      sendJSON(res, 404, { error: "会话不存在" });
+      return;
+    }
+    sessionId = session_id;
+  } else {
+    // 未指定则自动创建新会话
+    const created = await createTokenSession(t.token);
+    if (!created) {
+      sendJSON(res, 500, { error: "无法创建会话" });
+      return;
+    }
+    sessionId = created.id;
   }
 
-  // 并发检查：HR 会话正在处理时拒绝（不计次）。
-  // 与 handleChat 内部 runningExplorations 检查一致，避免重复计次。
+  // 并发检查：访客会话正在处理时拒绝（不计次）。
   if (runningExplorations.has(sessionId)) {
     sendJSON(res, 409, { error: "上一条消息还在处理中，请稍候", remaining: t.usage_limit - t.usage_count });
     return;
   }
 
-  // 确认可派发 → 计次（+1），再交给 handleChat 派发
+  // 确认可派发 → 计次（+1）
   incrementUsage(t.token);
+
+  // 将预读取的 body 注入 req，避免 handleChat 重复读取已消费的流
+  (req as unknown as Record<string, unknown>)._preReadBody = body;
 
   // 复用现有 handleChat（内部已处理并发防护、SSE 广播）
   await handleChat(sessionId, req, res);
@@ -1002,6 +1200,30 @@ async function handleShareTokens(
     return;
   }
 
+  // /api/share-tokens/:token/sessions — 查看/清除访客会话（admin）
+  const sessionsMatch = path.match(/^\/api\/share-tokens\/([^/]+)\/sessions$/);
+  if (sessionsMatch) {
+    const t = sessionsMatch[1];
+    if (!getToken(t)) {
+      sendJSON(res, 404, { error: "令牌不存在" });
+      return;
+    }
+    if (req.method === "GET") {
+      const sessions = await getAllTokenSessions(t);
+      res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+      res.end(JSON.stringify(sessions));
+      return;
+    }
+    if (req.method === "DELETE") {
+      const result = await clearTokenSessions(t);
+      res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: result.cleared, count: result.count }));
+      return;
+    }
+    sendJSON(res, 405, { error: "Method not allowed" });
+    return;
+  }
+
   // /api/share-tokens/:token — 禁用/启用/删除
   const tokenMatch = path.match(/^\/api\/share-tokens\/([^/]+)$/);
   if (tokenMatch) {
@@ -1019,13 +1241,13 @@ async function handleShareTokens(
       return;
     }
     if (req.method === "DELETE") {
-      const ok = deleteToken(t);
-      if (!ok) {
+      const result = await deleteToken(t);
+      if (!result.deleted) {
         sendJSON(res, 404, { error: "令牌不存在" });
         return;
       }
-      res.writeHead(204, CORS_HEADERS);
-      res.end();
+      res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ deleted: true, sessions_cleaned: result.sessions_cleaned }));
       return;
     }
   }

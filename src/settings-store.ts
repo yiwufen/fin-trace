@@ -27,7 +27,7 @@ export interface SettingsStore {
   // Web 管理端配置
   // admin_token: 管理 /api/sessions* 的门禁 token；
   //   未配置则不鉴权（本地开发），首次启动自动生成。
-  // demo_session_id: 固定为 HR 展示的「已完成会话」(只读，不计次)。
+  // demo_session_id: 固定为访客展示的「已完成会话」(只读，不计次)。
   web?: {
     admin_token?: string;
     demo_session_id?: string;

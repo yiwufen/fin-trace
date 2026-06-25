@@ -4,34 +4,62 @@ import type { Session, SessionSummary, ExploreRequest, FollowupRequest, ChatMess
 
 const BASE = "/api";
 
-// ─── admin token 管理 ───
-// 配置了 admin_token 的部署，所有 /api/sessions*、/api/settings*、/api/share-tokens* 需注入头
-const ADMIN_TOKEN_KEY = "fin-trace-admin-token";
+// ─── 认证（Cookie-based，替代 localStorage）───
+// 管理端通过 POST /api/auth/login 验证令牌，服务端设置 httpOnly Cookie。
+// 后续所有同源请求（fetch + EventSource）自动携带 Cookie，无需前端手动管理 token。
+// XSS 无法读取 httpOnly Cookie，相比 localStorage 更安全。
+// SSE 也不再需要通过 URL 查询参数传递 token。
 
-export function getAdminToken(): string | null {
-  return localStorage.getItem(ADMIN_TOKEN_KEY);
+/** 登录：验证 admin token 并设置 Cookie */
+export async function login(token: string): Promise<{ ok: boolean; required: boolean }> {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
-export function setAdminToken(token: string): void {
-  localStorage.setItem(ADMIN_TOKEN_KEY, token);
+/** 登出：清除认证 Cookie */
+export async function logout(): Promise<void> {
+  await fetch(`${BASE}/auth/logout`, { method: "POST" }).catch(() => {});
 }
 
-export function clearAdminToken(): void {
-  localStorage.removeItem(ADMIN_TOKEN_KEY);
+export interface AuthStatus {
+  required: boolean;
+  authenticated: boolean;
 }
 
-/** 是否已配置 admin token（后端），用于判断是否需要门禁 */
-export async function checkAdminRequired(): Promise<boolean> {
-  const res = await fetch(`${BASE}/sessions`, { headers: adminHeaders() });
-  if (res.status === 401) return true;
-  return false;
+/** 查询认证状态（无需鉴权） */
+export async function checkAuth(): Promise<AuthStatus> {
+  const res = await fetch(`${BASE}/auth/status`);
+  if (!res.ok) return { required: false, authenticated: false };
+  return res.json();
 }
 
 function adminHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const t = getAdminToken();
-  if (t) headers["X-Admin-Token"] = t;
-  return headers;
+  return { "Content-Type": "application/json" };
+}
+
+// ─── 全局 401 拦截 ───
+
+/** 鉴权错误 — 用于区分普通 HTTP 错误和 token 失效 */
+export class AuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+let onAuthLost: (() => void) | null = null;
+
+/** 注册全局 token 失效回调（由 App 在挂载时调用） */
+export function setAuthLostHandler(handler: () => void) {
+  onAuthLost = handler;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -39,6 +67,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: adminHeaders(),
     ...options,
   });
+  if (res.status === 401) {
+    onAuthLost?.();
+    const body = await res.json().catch(() => ({}));
+    throw new AuthError(body.error ?? "Unauthorized");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -188,11 +221,8 @@ export function createChatSSEConnection(
   sessionId: string,
   handlers: ChatSSEHandlers,
 ): EventSource {
-  // EventSource 不支持自定义请求头，通过 query parameter 传递 admin token
-  const token = getAdminToken();
-  const url = token
-    ? `/api/sessions/${sessionId}/stream?admin_token=${encodeURIComponent(token)}`
-    : `/api/sessions/${sessionId}/stream`;
+  // Cookie 自动携带认证信息，无需在 URL 中传递 token
+  const url = `/api/sessions/${sessionId}/stream`;
   const es = new EventSource(url);
 
   es.addEventListener("text_delta", (e) => {
@@ -243,7 +273,7 @@ export interface ShareTokenInfo {
   label: string;
   usage_limit: number;
   usage_count: number;
-  hr_session_id: string | null;
+  session_ids: string[];
   created_at: string;
   last_used_at: string | null;
   disabled: boolean;
@@ -267,11 +297,25 @@ export async function setShareTokenDisabled(token: string, disabled: boolean): P
   });
 }
 
-export async function deleteShareToken(token: string): Promise<void> {
+export async function deleteShareToken(token: string): Promise<{ deleted: boolean; sessions_cleaned: number }> {
   return request(`/share-tokens/${token}`, { method: "DELETE" });
 }
 
-/** 生成给 HR 的分享链接 */
+/** 获取令牌关联的全部访客会话数据（admin 查看） */
+export async function getShareTokenSessions(token: string): Promise<Session[]> {
+  try {
+    return await request<Session[]>(`/share-tokens/${token}/sessions`);
+  } catch {
+    return [];
+  }
+}
+
+/** 清除令牌关联的全部访客会话数据（admin 操作） */
+export async function deleteShareTokenSessions(token: string): Promise<{ ok: boolean; count: number }> {
+  return request(`/share-tokens/${token}/sessions`, { method: "DELETE" });
+}
+
+/** 生成给访客的分享链接 */
 export function buildShareLink(token: string): string {
   const origin = window.location.origin;
   return `${origin}/s/${token}`;
@@ -317,20 +361,21 @@ export async function getPublicTokenInfo(token: string): Promise<PublicTokenInfo
   }
 }
 
-/** HR 发消息（计次） */
-export async function sendPublicChat(token: string, message: string): Promise<void> {
+/** 访客发消息（计次，需指定 session_id） */
+export async function sendPublicChat(token: string, message: string, sessionId: string): Promise<void> {
   await publicRequest(`/token/${token}/chat`, {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, session_id: sessionId }),
   });
 }
 
-/** HR SSE 连接 */
+/** 访客 SSE 连接（需指定 session_id） */
 export function createPublicSSEConnection(
   token: string,
+  sessionId: string,
   handlers: ChatSSEHandlers,
 ): EventSource {
-  const es = new EventSource(`/api/public/token/${token}/stream`);
+  const es = new EventSource(`/api/public/token/${token}/stream?session=${encodeURIComponent(sessionId)}`);
 
   es.addEventListener("text_delta", (e) => {
     const data = JSON.parse(e.data);
@@ -371,6 +416,47 @@ export function createPublicSSEConnection(
   });
 
   return es;
+}
+
+// ─── 访客多会话管理 ───
+
+export interface TokenSessionSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+/** 访客获取自己的所有会话列表 */
+export async function listPublicSessions(token: string): Promise<TokenSessionSummary[]> {
+  try {
+    return await publicRequest<TokenSessionSummary[]>(`/token/${token}/sessions`);
+  } catch {
+    return [];
+  }
+}
+
+/** 访客创建新会话 */
+export async function createPublicSession(token: string, title?: string): Promise<{ id: string; title: string; created_at: string }> {
+  return publicRequest(`/token/${token}/sessions`, {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+/** 访客获取指定会话的消息 */
+export async function getPublicSessionMessages(token: string, sessionId: string): Promise<{ messages: ChatMessage[]; processing: boolean }> {
+  try {
+    return await publicRequest<{ messages: ChatMessage[]; processing: boolean }>(`/token/${token}/sessions/${sessionId}`);
+  } catch {
+    return { messages: [], processing: false };
+  }
+}
+
+/** 访客删除指定会话 */
+export async function deletePublicSession(token: string, sessionId: string): Promise<{ ok: boolean }> {
+  return publicRequest(`/token/${token}/sessions/${sessionId}`, { method: "DELETE" });
 }
 
 // 重新导出常用类型供组件使用
