@@ -1,48 +1,39 @@
-# fin-trace Docker Compose
+# fin-trace + Docker Registry
 #
-# CI 构建推送部署（推荐）：
-#   GitHub Actions 构建镜像 → push 到私有 Registry → SSH 服务器 pull + up -d
-#   日常部署仅传输增量层（几 MB），秒级完成。
+# 部署流程（CI 触发）:
+#   GitHub Actions SSH → 服务器 git pull → docker build (带代理)
+#   → docker push localhost:5000 → docker compose pull → up -d
 #
-# 本地兜底（无 CI 时）：
-#   先 docker build -t registry.fin.182-61-1-77.nip.io/fin-trace:latest .
-#   再 docker compose up -d
-#
-# 映射宿主机 3001 → 容器 3001（避开 443 上的 KG MCP 服务）
-# data/ 持久化：sessions / settings.json / share-tokens.json
+# Registry 仅供 localhost 访问，不对外暴露。
 
 services:
+  # ─── 应用 ───
   fin-trace:
-    # CI 构建推送镜像到私有 Registry，服务器仅 pull + up -d
-    image: registry.fin.182-61-1-77.nip.io/fin-trace:latest
+    image: localhost:5000/fin-trace:latest
     pull_policy: always
     container_name: fin-trace
     restart: unless-stopped
-    # 以宿主机 deployer 用户(uid 1000)运行，使 data/ 文件 deployer 可直接读写
     user: "1000:1000"
     ports:
       - "3001:3001"
     environment:
-      # 公网访问的对外地址（用于 Agent Card 等）
       - BASE_URL=https://fin.182-61-1-77.nip.io
       - HEADLESS=true
       - PORT=3001
     volumes:
-      # 运行时配置与数据持久化到宿主机，重建镜像不丢失
-      # data/ 含 sessions / settings.json(LLM+MCP+admin_token) / share-tokens.json
       - ./data:/app/data
-      # config.json（LLM/MCP 基础配置）单独挂载，避免重建容器丢失
       - ./config.json:/app/config.json
     networks:
       - default
       - knowledge-net
 
-  # ─── 私有 Docker Registry ───
-  # CI 构建产物推送至此，服务器从 localhost 拉取（Caddy 套 HTTPS + Basic Auth）
+  # ─── 私有 Docker Registry（仅 localhost:5000）───
   registry:
     image: registry:2
     container_name: fin-trace-registry
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
     volumes:
       - ./registry-data:/var/lib/registry
       - ./registry-auth:/auth:ro
@@ -50,13 +41,10 @@ services:
       - REGISTRY_AUTH=htpasswd
       - REGISTRY_AUTH_HTPASSWD_REALM=fin-trace Registry
       - REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
-    ports:
-      - "127.0.0.1:5000:5000"
     networks:
       - knowledge-net
 
 networks:
-  # 加入 KG 的外部网络，使 knowledge-caddy 能用容器名 fin-trace:3001 反代（HTTPS）
   knowledge-net:
     external: true
     name: repo_knowledge-net
