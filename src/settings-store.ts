@@ -1,8 +1,8 @@
-// 服务端持久化存储 — 存入 data/settings.json，与 config.json 解耦
+// 服务端凭据存储 — 存入 data/settings.json
 //
-// 存储结构:
-//   llm: { provider, base_url, model, api_key }
-//   mcp: { knowledge_graph_url }
+// 与 config.json 职责分离:
+//   config.json     → 基础设施配置（provider, base_url, model, max_tokens, kg_url, transport, ...）
+//   settings.json   → 仅存储凭据/密钥（api_key, admin_token），前端 UI 可读写
 //
 // getApiKey() 优先级:
 //   1. 环境变量 (OPENAI_API_KEY / ANTHROPIC_API_KEY)
@@ -10,36 +10,27 @@
 //   3. config.json 中的 llm.api_key
 //   4. base_url 非官方时返回 "unused"
 //
-// 前端通过 PUT /api/settings 写入，GET /api/settings 返回完整配置（api_key 脱敏）。
-// API key 一旦设置后不可从 API 读取明文。
+// API key 一旦设置后不可从 API 读取明文（仅返回 configured: true/false）。
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 export interface SettingsStore {
+  // LLM 凭据 — 前端 UI 可设置，优先级高于 config.json
   llm?: {
     api_key?: string;
-    provider?: "anthropic" | "openai";
-    base_url?: string;
-    model?: string;
   };
+  // MCP 凭据 — 前端 UI 可设置
   mcp?: {
-    knowledge_graph_url?: string;
-    transport?: "streamable-http" | "sse";
     api_key?: string;
   };
-  // A2A 入站鉴权 token：未配置则不鉴权（本地开发）；
-  // 配置后 /a2a 端点校验 Authorization: Bearer <inbound_token>
-  a2a?: {
-    inbound_token?: string;
-  };
-  // Web 公开访问相关
-  // demo_session_id: 固定为 HR 展示的「已完成会话」(只读，不计次)
-  // admin_token: 管理 /api/sessions*、/api/settings* 的门禁 token；
-  //   未配置则不鉴权（本地开发）。公网部署建议设置。
+  // Web 管理端配置
+  // admin_token: 管理 /api/sessions* 的门禁 token；
+  //   未配置则不鉴权（本地开发），首次启动自动生成。
+  // demo_session_id: 固定为 HR 展示的「已完成会话」(只读，不计次)。
   web?: {
-    demo_session_id?: string;
     admin_token?: string;
+    demo_session_id?: string;
   };
 }
 

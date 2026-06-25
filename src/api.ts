@@ -52,7 +52,7 @@ import { handleUserMessage } from "./chat/loop.js";
 import type { ChatMessage } from "./chat/types.js";
 import { readSettings, writeSettings } from "./settings-store.js";
 import type { SettingsStore } from "./settings-store.js";
-import { clearConfigCache } from "./agent/config.js";
+import { clearConfigCache, readConfig } from "./agent/config.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("api");
@@ -114,6 +114,23 @@ const stepBuffers = new Map<string, { eventType: string; data: unknown }[]>();
 
 // 追问时需要从文件恢复 ExplorationState，存在内存中避免频繁读文件
 const stateCache = new Map<string, ExplorationState>();
+
+// ─── 辅助函数 ───
+
+/** 从 URL query string 中提取指定参数值（不引入 URL 模块依赖） */
+function parseQueryParam(url: string, key: string): string | undefined {
+  const qIdx = url.indexOf("?");
+  if (qIdx === -1) return undefined;
+  const qs = url.slice(qIdx + 1);
+  for (const part of qs.split("&")) {
+    const eqIdx = part.indexOf("=");
+    if (eqIdx === -1) continue;
+    const k = decodeURIComponent(part.slice(0, eqIdx));
+    const v = decodeURIComponent(part.slice(eqIdx + 1));
+    if (k === key) return v;
+  }
+  return undefined;
+}
 
 // ─── JSON 解析辅助 ───
 
@@ -193,9 +210,14 @@ export async function handleApiRequest(
 
   // ─── admin 门禁：配置了 admin_token 后，管理端需 X-Admin-Token 头 ───
   // 影响 /api/sessions*、/api/settings*、/api/share-tokens*
+  // SSE 端点兼容：浏览器 EventSource 不支持自定义头，允许通过 query parameter 传递 token
   const adminToken = readSettings().web?.admin_token;
   if (adminToken) {
-    const provided = req.headers["x-admin-token"];
+    let provided = req.headers["x-admin-token"];
+    // SSE 回退：从 URL query parameter 读取 admin_token
+    if (!provided && matchRoute(url).action === "stream") {
+      provided = parseQueryParam(url, "admin_token");
+    }
     if (provided !== adminToken) {
       sendJSON(res, 401, { error: "Unauthorized: invalid or missing admin token" });
       return true;
@@ -265,6 +287,12 @@ export async function handleApiRequest(
         return true;
       }
       if (req.method === "DELETE") {
+        // 删除前先取消正在运行的任务
+        const entry = runningExplorations.get(match.sessionId);
+        if (entry) {
+          entry.abortController.abort();
+          runningExplorations.delete(match.sessionId!);
+        }
         await deleteSession(match.sessionId);
         res.writeHead(204, CORS_HEADERS);
         res.end();
@@ -538,23 +566,26 @@ async function handleSettings(
 }
 
 function handleGetSettings(res: ServerResponse): void {
+  const config = readConfig();
   const settings = readSettings();
-  const apiKey = settings.llm?.api_key;
+  const llmApiKey = settings.llm?.api_key;
+  const mcpApiKey = settings.mcp?.api_key ?? config.mcp.servers.knowledge_graph.api_key;
   sendJSON(res, 200, {
     llm: {
-      provider: settings.llm?.provider ?? null,
-      base_url: settings.llm?.base_url ?? null,
-      model: settings.llm?.model ?? null,
-      api_key_configured: !!apiKey && apiKey.length > 0,
+      provider: config.llm.provider,
+      base_url: config.llm.base_url,
+      model: config.llm.model,
+      max_tokens: config.llm.max_tokens,
+      api_key_configured: !!llmApiKey && llmApiKey.length > 0,
     },
     mcp: {
-      knowledge_graph_url: settings.mcp?.knowledge_graph_url ?? null,
-      transport: settings.mcp?.transport ?? "streamable-http",
-      api_key_configured: !!(settings.mcp?.api_key) && settings.mcp!.api_key!.length > 0,
+      knowledge_graph_url: config.mcp.servers.knowledge_graph.url,
+      transport: config.mcp.servers.knowledge_graph.transport ?? "streamable-http",
+      api_key_configured: !!mcpApiKey && mcpApiKey.length > 0,
     },
     a2a: {
       inbound_token_configured:
-        !!(settings.a2a?.inbound_token) && settings.a2a.inbound_token.length > 0,
+        !!(config.a2a?.inbound_token) && config.a2a.inbound_token.length > 0,
     },
     web: {
       demo_session_id: settings.web?.demo_session_id ?? null,
@@ -566,63 +597,39 @@ function handleGetSettings(res: ServerResponse): void {
 
 async function handlePutSettings(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readBody(req);
-  const { llm, mcp, a2a, web } = JSON.parse(body || "{}");
+  const { llm, mcp, web } = JSON.parse(body || "{}");
 
   const current = readSettings();
 
-  // LLM 配置
+  // LLM 凭据 — 仅 api_key 可通过前端设置（provider/base_url/model 在 config.json）
   if (llm && typeof llm === "object") {
     const merged: SettingsStore["llm"] = { ...current.llm };
     if (typeof llm.api_key === "string" && llm.api_key.trim().length > 0) {
       merged.api_key = llm.api_key.trim();
     }
-    if (llm.provider === "anthropic" || llm.provider === "openai") {
-      merged.provider = llm.provider;
-    }
-    if (typeof llm.base_url === "string" && llm.base_url.trim().length > 0) {
-      merged.base_url = llm.base_url.trim();
-    }
-    if (typeof llm.model === "string" && llm.model.trim().length > 0) {
-      merged.model = llm.model.trim();
-    }
     current.llm = merged;
   }
 
-  // MCP 配置
+  // MCP 凭据 — 仅 api_key（url/transport 在 config.json）
   if (mcp && typeof mcp === "object") {
     const merged: SettingsStore["mcp"] = { ...current.mcp };
-    if (typeof mcp.knowledge_graph_url === "string" && mcp.knowledge_graph_url.trim().length > 0) {
-      merged.knowledge_graph_url = mcp.knowledge_graph_url.trim();
-    }
-    if (mcp.transport === "streamable-http" || mcp.transport === "sse") {
-      merged.transport = mcp.transport;
-    }
     if (typeof mcp.api_key === "string" && mcp.api_key.trim().length > 0) {
       merged.api_key = mcp.api_key.trim();
     }
     current.mcp = merged;
   }
 
-  // A2A 入站鉴权配置
-  if (a2a && typeof a2a === "object") {
-    const merged: SettingsStore["a2a"] = { ...current.a2a };
-    if (typeof a2a.inbound_token === "string" && a2a.inbound_token.trim().length > 0) {
-      merged.inbound_token = a2a.inbound_token.trim();
-    }
-    current.a2a = merged;
-  }
-
-  // Web 公开访问配置
+  // Web 管理端配置
   if (web && typeof web === "object") {
     const merged: SettingsStore["web"] = { ...current.web };
+    if (typeof web.admin_token === "string" && web.admin_token.trim().length > 0) {
+      merged.admin_token = web.admin_token.trim();
+    }
     // demo_session_id 允许设为 null（清除）或字符串
     if (web.demo_session_id === null) {
       merged.demo_session_id = undefined;
     } else if (typeof web.demo_session_id === "string" && web.demo_session_id.trim().length > 0) {
       merged.demo_session_id = web.demo_session_id.trim();
-    }
-    if (typeof web.admin_token === "string" && web.admin_token.trim().length > 0) {
-      merged.admin_token = web.admin_token.trim();
     }
     current.web = merged;
   }
@@ -672,13 +679,13 @@ async function parseMCPInitResponse(response: Response): Promise<Record<string, 
 
 /** 测试 KG MCP 服务连通性 — 支持 SSE 和 Streamable HTTP 两种协议 */
 async function handleValidate(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const settings = readSettings();
-  const kgUrl = settings.mcp?.knowledge_graph_url;
-  const transport = settings.mcp?.transport ?? "streamable-http";
-  const apiKey = settings.mcp?.api_key;
+  const config = readConfig();
+  const kgUrl = config.mcp.servers.knowledge_graph.url;
+  const transport = config.mcp.servers.knowledge_graph.transport ?? "streamable-http";
+  const apiKey = config.mcp.servers.knowledge_graph.api_key;
 
   if (!kgUrl) {
-    sendJSON(res, 400, { error: "knowledge_graph_url 未配置" });
+    sendJSON(res, 400, { error: "knowledge_graph URL 未在 config.json 中配置" });
     return;
   }
 
@@ -823,24 +830,28 @@ async function handleChat(
   res.writeHead(202, { ...CORS_HEADERS, "Content-Type": "application/json" });
   res.end(JSON.stringify({ status: "accepted" }));
 
-  // 异步执行
+  // 立即持久化用户消息：防止用户在 AI turn 期间刷新页面导致消息丢失
   const userMsg: ChatMessage = {
     role: "user",
     content: message.trim(),
     created_at: new Date().toISOString(),
   };
 
+  appendChatMessages(chatSessionId, [userMsg]).catch((err) => {
+    log.warn({ err, sessionId }, "持久化用户消息失败");
+  });
+
   handleUserMessage(history, message.trim(), (eventType: string, data: unknown) =>
     broadcastSSE(chatSessionId, eventType, data),
-  chatMode)
+  chatMode,
+    runningExplorations.get(sessionId)?.abortController.signal,
+  )
     .then(async (newMessages) => {
-      // 原子写入：userMsg + assistant 回复 一次性持久化，避免两次 append 的读写竞态
-      await appendChatMessages(chatSessionId, [userMsg, ...newMessages]);
+      // userMsg 已持久化，这里只追加 assistant 回复
+      await appendChatMessages(chatSessionId, newMessages);
     })
     .catch(async (err) => {
       log.error({ err, sessionId }, "聊天处理失败");
-      // 即使出错也至少持久化用户消息
-      appendChatMessages(chatSessionId, [userMsg]).catch(() => {});
       broadcastSSE(sessionId, "error", {
         error: String((err as Error)?.message ?? err),
       });

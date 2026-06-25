@@ -984,6 +984,7 @@ export async function runExploration(
   input: ExplorationInput,
   onStep?: (event: StepEvent) => void,
   initialState?: ExplorationState,
+  signal?: AbortSignal,
 ): Promise<ExplorationResult> {
   const state = initialState ?? initState(input);
   const sl = input.session_id
@@ -1005,6 +1006,39 @@ export async function runExploration(
 
   try {
     while (true) {
+      // 检查取消信号
+      if (signal?.aborted) {
+        sl.info("探索被取消");
+        state.phase = "FINALIZE";
+        // 快速结束：使用已有 findings，不生成 event threads
+        state.final_findings = deduplicateFindings(state.key_insights);
+        state.event_threads = [];
+        onStep?.({
+          type: "finalize",
+          step: state.step_count,
+          phase: "FINALIZE",
+          exploration_meta: {
+            completion_reason: "cancelled",
+            stats: {
+              steps: state.step_count,
+              entities_visited: state.visited.size,
+              findings_count: state.key_insights.length,
+              events_buffered: state.raw_event_archive.length,
+              tokens_used: state.budget.used_tokens,
+            },
+            exploration_log: state.exploration_log.map((e) => ({
+              step: e.step,
+              phase: e.phase,
+              decision: e.decision,
+              tool_calls_count: e.tool_calls_count,
+              new_findings_count: e.new_findings_count,
+            })),
+            reliability_note: "用户取消探索",
+          },
+        });
+        break;
+      }
+
       sl.info(
         { step: state.step_count, phase: state.phase, visited: state.visited.size,
           frontier: state.frontier.length, insights: state.key_insights.length,

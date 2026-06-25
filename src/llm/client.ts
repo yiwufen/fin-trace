@@ -17,6 +17,7 @@ export interface CreateParams {
   system?: string;
   messages: MessageParam[];
   tools?: Tool[];
+  signal?: AbortSignal;
 }
 
 // ─── Client 接口 ───
@@ -90,7 +91,7 @@ function createAnthropicClient(config: AppConfig): LlmClient {
           system: params.system,
           messages: params.messages as Anthropic.MessageParam[],
           tools: params.tools as Anthropic.Tool[] | undefined,
-        });
+        }, params.signal ? { signal: params.signal } : undefined);
 
         const textCallbacks: Array<(text: string) => void> = [];
 
@@ -159,7 +160,7 @@ function createOpenAiClient(config: AppConfig): LlmClient {
           max_tokens: params.max_tokens,
           messages: messagesToOpenAi(params.messages, params.system),
           tools: params.tools ? toolsToOpenAi(params.tools) : undefined,
-        });
+        }, params.signal ? { signal: params.signal } : undefined);
 
         // OpenAI SDK 的 .stream() 返回 Stream 对象，本身也是 AsyncIterable
         return openAiStreamToAnthropic(stream as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>);

@@ -1,13 +1,13 @@
 # 部署指南（公开访问 / HR 分享）
 
-将 fin-trace 部署到 baidu 服务器（182.61.1.77，已装 Docker），对外通过 **http://182.61.1.77:3001** 访问。HR 通过分享链接（带使用次数限制）查看演示会话并发起有限次对话。
+将 fin-trace 部署到 baidu 服务器（182.61.1.77，已装 Docker），对外通过 **https://fin.182-61-1-77.nip.io** 访问。HR 通过分享链接（带使用次数限制）查看演示会话并发起有限次对话。
 
 ## 架构
 
 ```
 HR 浏览器
-  │  http://182.61.1.77:3001/s/<token>   ← 分享链接（限次）
-  │  http://182.61.1.77:3001/?admin=<token>  ← 管理后台深链
+  │  https://fin.182-61-1-77.nip.io/s/<token>   ← 分享链接（限次）
+  │  https://fin.182-61-1-77.nip.io/?admin=<token>  ← 管理后台深链
   ▼
 baidu 服务器 (182.61.1.77)
   ├── Docker: fin-trace 容器 (:3001)   ← 本项目
@@ -42,7 +42,7 @@ ssh baidu 'cd ~/fin-trace && docker compose logs' | grep admin_token
 管理端深链：/?admin=<token>     复制此链接登录管理后台
 ```
 
-> 用这个深链 `http://182.61.1.77:3001/?admin=<token>` 登录管理后台（token 会存入 localStorage）。
+> 用这个深链 `https://fin.182-61-1-77.nip.io/?admin=<token>` 登录管理后台（token 会存入 localStorage）。
 
 ## 配置（管理后台）
 
@@ -59,7 +59,7 @@ ssh baidu 'cd ~/fin-trace && docker compose logs' | grep admin_token
 管理后台点右上角 **分享**：
 
 1. 输入标签（如 `HR-张三`）+ 使用次数（如 `5`）
-2. 点「创建」 → 列表里出现一条，点「复制链接」得到 `http://182.61.1.77:3001/s/<token>`
+2. 点「创建」 → 列表里出现一条，点「复制链接」得到 `https://fin.182-61-1-77.nip.io/s/<token>`
 3. 把链接发给 HR
 
 **配额语义**：

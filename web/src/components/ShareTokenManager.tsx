@@ -5,8 +5,12 @@ import {
   setShareTokenDisabled,
   deleteShareToken,
   buildShareLink,
+  getSettings,
+  updateSettings,
+  listSessions,
   type ShareTokenInfo,
 } from "../api";
+import type { SessionSummary } from "../api";
 
 interface Props {
   open: boolean;
@@ -25,6 +29,11 @@ export function ShareTokenManager({ open, onClose }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // 展示会话（Demo）
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [demoSessionId, setDemoSessionId] = useState("");
+  const [demoSaving, setDemoSaving] = useState(false);
+
   const refresh = useCallback(async () => {
     try {
       const list = await listShareTokens();
@@ -38,6 +47,9 @@ export function ShareTokenManager({ open, onClose }: Props) {
     if (!open) return;
     setError(null);
     refresh();
+    // 加载会话列表 + 当前 demo 配置
+    listSessions().then(setSessions).catch(() => setSessions([]));
+    getSettings().then((s) => setDemoSessionId(s.web.demo_session_id ?? "")).catch(() => {});
   }, [open, refresh]);
 
   const handleCreate = useCallback(async () => {
@@ -85,6 +97,19 @@ export function ShareTokenManager({ open, onClose }: Props) {
     }
   }, []);
 
+  // 保存展示会话选择
+  const handleDemoChange = useCallback(async (sessionId: string) => {
+    setDemoSessionId(sessionId);
+    setDemoSaving(true);
+    try {
+      await updateSettings({ web: { demo_session_id: sessionId || null } });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDemoSaving(false);
+    }
+  }, []);
+
   if (!open) return null;
 
   return (
@@ -96,6 +121,28 @@ export function ShareTokenManager({ open, onClose }: Props) {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-800">分享链接</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+        </div>
+
+        {/* 展示会话（Demo）选择 — HR 只读查看 */}
+        <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+          <legend className="text-sm font-semibold text-gray-500 uppercase tracking-wide">展示案例</legend>
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-gray-600">选择会话作为演示案例</label>
+            <select
+              value={demoSessionId}
+              onChange={(e) => handleDemoChange(e.target.value)}
+              disabled={demoSaving}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+            >
+              <option value="">未选择</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title} ({new Date(s.updated_at).toLocaleDateString()})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400">HR 通过分享链接可只读查看此会话（不计次数）{demoSaving && " · 保存中..."}</p>
+          </div>
         </div>
 
         {/* 创建表单 */}

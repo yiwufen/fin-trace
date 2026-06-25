@@ -14,5 +14,8 @@
         "api_key": ""
       }
     }
+  },
+  "a2a": {
+    "inbound_token": ""
   }
 }

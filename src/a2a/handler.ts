@@ -35,7 +35,7 @@ import {
   broadcastTaskFailed,
   closeAllConnections,
 } from "./sse.js";
-import { readSettings } from "../settings-store.js";
+import { readConfig } from "../agent/config.js";
 
 // ─── JSON-RPC helpers ───
 
@@ -382,9 +382,9 @@ export async function handleA2ARequest(
     return true;
   }
 
-  // Bearer 鉴权：settings 未配置 inbound_token 时放行（本地开发）；
+  // Bearer 鉴权：config.json 未配置 inbound_token 时放行（本地开发）；
   // 配置后校验 Authorization: Bearer <token>
-  const expectedToken = readSettings().a2a?.inbound_token;
+  const expectedToken = readConfig().a2a?.inbound_token;
   if (expectedToken) {
     const auth = req.headers.authorization;
     if (auth !== `Bearer ${expectedToken}`) {

@@ -86,6 +86,7 @@ export async function handleUserMessage(
   userMessage: string,
   broadcast: BroadcastFn,
   mode: ChatMode = "human",
+  signal?: AbortSignal,
 ): Promise<ChatMessage[]> {
   const apiMessages: MessageParam[] = historyToApiMessages(history);
 
@@ -95,7 +96,7 @@ export async function handleUserMessage(
     content: userMessage,
   });
 
-  return runOuterTurn(apiMessages, broadcast, mode);
+  return runOuterTurn(apiMessages, broadcast, mode, signal);
 }
 
 // ─── ChatMessage[] → MessageParam[] ───
@@ -172,12 +173,19 @@ async function runOuterTurn(
   apiMessages: MessageParam[],
   broadcast: BroadcastFn,
   mode: ChatMode,
+  signal?: AbortSignal,
 ): Promise<ChatMessage[]> {
   const newMessages: ChatMessage[] = [];
   const config = readConfig();
   const systemPrompt = getSystemPrompt(mode) + "\n\n" + getEnvironmentContext();
 
   while (true) {
+    // 检查取消信号
+    if (signal?.aborted) {
+      broadcast("cancelled", {});
+      break;
+    }
+
     const llm = createLlmClient();
 
     // ─── 流式调用 LLM ───
@@ -187,6 +195,7 @@ async function runOuterTurn(
       system: systemPrompt,
       messages: apiMessages,
       tools: [GRAPH_EXPLORE_TOOL],
+      signal,
     });
 
     let fullText = "";
@@ -265,6 +274,12 @@ async function runOuterTurn(
     };
 
     // ─── 执行 tool calls（并行/串行分组）───
+    // 执行前再次检查取消信号
+    if (signal?.aborted) {
+      broadcast("cancelled", {});
+      break;
+    }
+
     const toolResultBlocks: ToolResultBlock[] = [];
     const apiToolResults: ToolResultBlockParam[] = [];
     const resultByToolUseId = new Map<string, { summaryJson?: string; error?: string }>();
@@ -312,6 +327,8 @@ async function runOuterTurn(
               broadcast("step", enriched);
             }
           },
+          undefined, // initialState
+          signal,
         );
 
         const summary = formatExplorationResult(

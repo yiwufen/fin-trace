@@ -107,6 +107,7 @@ export interface SettingsResponse {
     provider: string | null;
     base_url: string | null;
     model: string | null;
+    max_tokens: number | null;
     api_key_configured: boolean;
   };
   mcp: {
@@ -123,13 +124,8 @@ export interface SettingsResponse {
 export interface SettingsUpdate {
   llm?: {
     api_key?: string;
-    provider?: "anthropic" | "openai";
-    base_url?: string;
-    model?: string;
   };
   mcp?: {
-    knowledge_graph_url?: string;
-    transport?: "streamable-http" | "sse";
     api_key?: string;
   };
   web?: {
@@ -192,7 +188,12 @@ export function createChatSSEConnection(
   sessionId: string,
   handlers: ChatSSEHandlers,
 ): EventSource {
-  const es = new EventSource(`/api/sessions/${sessionId}/stream`);
+  // EventSource 不支持自定义请求头，通过 query parameter 传递 admin token
+  const token = getAdminToken();
+  const url = token
+    ? `/api/sessions/${sessionId}/stream?admin_token=${encodeURIComponent(token)}`
+    : `/api/sessions/${sessionId}/stream`;
+  const es = new EventSource(url);
 
   es.addEventListener("text_delta", (e) => {
     const data = JSON.parse(e.data);

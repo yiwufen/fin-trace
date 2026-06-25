@@ -5,7 +5,7 @@ import type {
 } from "./types";
 import {
   listSessions, createSession, deleteSession as deleteSessionApi,
-  getSession, sendMessage, createChatSSEConnection, getSessionStatus,
+  getSession, sendMessage, createChatSSEConnection, getSessionStatus, cancelExploration,
 } from "./api";
 import { SessionList } from "./components/SessionList";
 import { ChatView } from "./components/ChatView";
@@ -157,29 +157,9 @@ export default function App() {
     }
   }, []);
 
-  // ─── 核心操作：发送消息 ───
+  // ─── SSE 连接创建（可复用：发送消息 + 刷新恢复）───
 
-  const handleSend = useCallback((text: string) => {
-    const sessionId = activeIdRef.current;
-    if (!sessionId) return;
-
-    let data = sessionsRef.current.get(sessionId);
-    if (!data) {
-      data = createSessionData();
-      sessionsRef.current.set(sessionId, data);
-    }
-    if (data.isProcessing) return;
-
-    // 重置状态
-    data.isProcessing = true;
-    data.segments = [];
-
-    // 追加用户消息
-    const userMsg: ChatMessage = { role: "user", content: text, created_at: new Date().toISOString() };
-    data.messages.push(userMsg);
-    syncView(sessionId);
-
-    // 建立 SSE 连接
+  const connectSSE = useCallback((sessionId: string): EventSource => {
     const es = createChatSSEConnection(sessionId, {
       onTextDelta: (t) => {
         const d = sessionsRef.current.get(sessionId);
@@ -198,7 +178,6 @@ export default function App() {
         const d = sessionsRef.current.get(sessionId);
         if (!d) return;
         const segs = d.segments;
-        // 关闭当前 TextSegment 的 streaming
         const last = segs[segs.length - 1];
         if (last && last.type === "text") {
           last.streaming = false;
@@ -252,7 +231,6 @@ export default function App() {
 
       onFinalize: () => {
         // tool_result 已携带完整 summary，finalize 仅作为完成信号
-        // 不做额外处理
       },
 
       onMessageComplete: () => {
@@ -279,21 +257,49 @@ export default function App() {
         finishTurn(sessionId);
       },
     });
+    return es;
+  }, [syncView, finishTurn, buildFinalMessage]);
 
-    data.es = es;
+  // ─── 核心操作：发送消息 ───
+
+  const handleSend = useCallback((text: string) => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+
+    let data = sessionsRef.current.get(sessionId);
+    if (!data) {
+      data = createSessionData();
+      sessionsRef.current.set(sessionId, data);
+    }
+    if (data.isProcessing) return;
+
+    // 重置状态
+    data.isProcessing = true;
+    data.segments = [];
+
+    // 追加用户消息
+    const userMsg: ChatMessage = { role: "user", content: text, created_at: new Date().toISOString() };
+    data.messages.push(userMsg);
+    syncView(sessionId);
+
+    // 建立 SSE 连接
+    data.es = connectSSE(sessionId);
 
     // 发送 HTTP 请求
     sendMessage(sessionId, text).catch((err) => {
       console.error("[chat] send error:", err);
       finishTurn(sessionId);
     });
-  }, [syncView, finishTurn, buildFinalMessage]);
+  }, [connectSSE, finishTurn]);
 
   const handleStop = useCallback(() => {
     const sessionId = activeIdRef.current;
     if (!sessionId) return;
     const data = sessionsRef.current.get(sessionId);
     if (!data?.isProcessing) return;
+
+    // 通知后端取消
+    cancelExploration(sessionId).catch(() => {});
 
     if (data.es) { data.es.close(); data.es = null; }
 
@@ -332,19 +338,23 @@ export default function App() {
 
     syncView(id);
 
-    // 远程验证：后端是否仍在处理（仅当本地显示 processing 时调用）
-    if (data?.isProcessing) {
-      getSessionStatus(id).then(({ running }) => {
-        if (!running) {
-          const d = sessionsRef.current.get(id);
-          if (d?.isProcessing) {
-            if (d.es) { d.es.close(); d.es = null; }
-            buildFinalMessage(id);
-            finishTurn(id);
-          }
-        }
-      }).catch(() => {});
-    }
+    // 始终检查后端运行状态（刷新后 isProcessing 为 false 但后端可能仍在处理）
+    getSessionStatus(id).then(({ running }) => {
+      const d = sessionsRef.current.get(id);
+      if (!d) return;
+      if (running && !d.isProcessing) {
+        // 后端在运行但前端不知道 → 恢复处理状态，重建 SSE 连接
+        d.isProcessing = true;
+        d.segments = [];
+        d.es = connectSSE(id);
+        syncView(id);
+      } else if (!running && d.isProcessing) {
+        // 后端已停止但前端仍显示处理中 → 清理
+        if (d.es) { d.es.close(); d.es = null; }
+        buildFinalMessage(id);
+        finishTurn(id);
+      }
+    }).catch(() => {});
 
     getSession(id)
       .then((session) => {
@@ -373,6 +383,15 @@ export default function App() {
   };
 
   const handleDelete = async (id: string) => {
+    // 如果会话正在运行，先取消
+    const data = sessionsRef.current.get(id);
+    if (data?.isProcessing) {
+      if (data.es) { data.es.close(); data.es = null; }
+      data.isProcessing = false;
+      data.segments = [];
+    }
+    cancelExploration(id).catch(() => {});
+
     sessionsRef.current.delete(id);
     messageCache.current.delete(id);
     await deleteSessionApi(id);

@@ -1,41 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
-import { getSettings, updateSettings, validateKGEndpoint, listSessions } from "../api";
-import type { SettingsResponse, SessionSummary } from "../api";
+import { getSettings, updateSettings, validateKGEndpoint } from "../api";
+import type { SettingsResponse } from "../api";
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
-interface ProviderPreset {
-  id: string;
-  value: "openai" | "anthropic";
-  label: string;
-  defaultBaseUrl: string;
-  defaultModel: string;
-}
-
-const PROVIDER_PRESETS: ProviderPreset[] = [
-  { id: "deepseek", value: "openai", label: "DeepSeek / OpenAI 兼容", defaultBaseUrl: "https://api.deepseek.com", defaultModel: "deepseek-v4-pro" },
-  { id: "openai", value: "openai", label: "OpenAI", defaultBaseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o" },
-  { id: "anthropic", value: "anthropic", label: "Anthropic", defaultBaseUrl: "https://api.anthropic.com", defaultModel: "claude-sonnet-4-6" },
-];
-
 export function SettingsModal({ open, onClose }: Props) {
-  // ─── 表单状态 ───
+  // ─── 只读展示（来自 config.json）───
   const [provider, setProvider] = useState("openai");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [maxTokens, setMaxTokens] = useState<number | null>(null);
   const [kgUrl, setKgUrl] = useState("");
   const [transport, setTransport] = useState<"streamable-http" | "sse">("streamable-http");
+
+  // ─── 凭据编辑（写入 settings.json）───
+  const [apiKey, setApiKey] = useState("");
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [kgApiKey, setKgApiKey] = useState("");
   const [kgApiKeyConfigured, setKgApiKeyConfigured] = useState(false);
-
-  // Web 公开访问
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [demoSessionId, setDemoSessionId] = useState("");
   const [adminTokenConfigured, setAdminTokenConfigured] = useState(false);
   const [adminToken, setAdminToken] = useState("");
 
@@ -54,40 +39,34 @@ export function SettingsModal({ open, onClose }: Props) {
 
     getSettings()
       .then((s: SettingsResponse) => {
+        // 基础设施（只读，来自 config.json）
         if (s.llm.provider) setProvider(s.llm.provider);
         if (s.llm.base_url) setBaseUrl(s.llm.base_url);
         if (s.llm.model) setModel(s.llm.model);
-        setApiKeyConfigured(s.llm.api_key_configured);
+        setMaxTokens(s.llm.max_tokens);
         if (s.mcp.knowledge_graph_url) setKgUrl(s.mcp.knowledge_graph_url);
         if (s.mcp.transport) setTransport(s.mcp.transport);
+        // 凭据状态（来自 settings.json）
+        setApiKeyConfigured(s.llm.api_key_configured);
         setKgApiKeyConfigured(s.mcp.api_key_configured);
-        setDemoSessionId(s.web.demo_session_id ?? "");
         setAdminTokenConfigured(s.web.admin_token_configured);
       })
       .catch(() => {});
-    // 加载会话列表供 demo 选择
-    listSessions().then(setSessions).catch(() => setSessions([]));
   }, [open]);
 
-  // ─── 保存 ───
+  // ─── 保存凭据 ───
   const handleSave = useCallback(async () => {
     setSaving(true);
     setMessage(null);
     try {
       await updateSettings({
         llm: {
-          provider: provider as "openai" | "anthropic",
-          base_url: baseUrl.trim() || undefined,
-          model: model.trim() || undefined,
           ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         },
         mcp: {
-          knowledge_graph_url: kgUrl.trim() || undefined,
-          transport,
           ...(kgApiKey.trim() ? { api_key: kgApiKey.trim() } : {}),
         },
         web: {
-          demo_session_id: demoSessionId || null,
           ...(adminToken.trim() ? { admin_token: adminToken.trim() } : {}),
         },
       });
@@ -103,31 +82,27 @@ export function SettingsModal({ open, onClose }: Props) {
         setAdminTokenConfigured(true);
         setAdminToken("");
       }
-      setMessage({ type: "success", text: "配置已保存" });
+      setMessage({ type: "success", text: "凭据已保存" });
     } catch (err) {
       setMessage({ type: "error", text: `保存失败：${(err as Error).message}` });
     } finally {
       setSaving(false);
     }
-  }, [provider, baseUrl, model, apiKey, kgUrl, transport, kgApiKey, demoSessionId, adminToken]);
+  }, [apiKey, kgApiKey, adminToken]);
 
-  // ─── 测试连通性 ───
+  // ─── 测试连通性（直接从 config.json 读取 KG URL，如需 api_key 则先保存）───
   const handleValidate = useCallback(async () => {
-    if (!kgUrl.trim()) {
-      setValidateResult({ ok: false, error: "请先输入 KG Endpoint URL" });
-      return;
-    }
     setValidating(true);
     setValidateResult(null);
     try {
-      // 先保存当前 MCP 配置（含 transport 和 api_key）
-      await updateSettings({
-        mcp: {
-          knowledge_graph_url: kgUrl.trim(),
-          transport,
-          ...(kgApiKey.trim() ? { api_key: kgApiKey.trim() } : {}),
-        },
-      });
+      // 如果有新的 KG API key，先保存（validate 端点从 config 读取，其中 api_key 来自 settings.json）
+      if (kgApiKey.trim()) {
+        await updateSettings({
+          mcp: { api_key: kgApiKey.trim() },
+        });
+        setKgApiKeyConfigured(true);
+        setKgApiKey("");
+      }
       const result = await validateKGEndpoint();
       setValidateResult(result);
     } catch (err) {
@@ -135,7 +110,7 @@ export function SettingsModal({ open, onClose }: Props) {
     } finally {
       setValidating(false);
     }
-  }, [kgUrl, transport, kgApiKey]);
+  }, [kgApiKey]);
 
   if (!open) return null;
 
@@ -159,52 +134,64 @@ export function SettingsModal({ open, onClose }: Props) {
         <fieldset className="space-y-4">
           <legend className="text-sm font-semibold text-gray-500 uppercase tracking-wide">LLM</legend>
 
-          {/* Provider */}
+          {/* Provider — 只读 */}
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-gray-600">Provider</label>
-            <select
+            <label className="block text-sm font-medium text-gray-600">
+              Provider
+              <span className="ml-1 text-xs text-gray-400">（config.json）</span>
+            </label>
+            <input
+              type="text"
               value={provider}
-              onChange={(e) => {
-                const preset = PROVIDER_PRESETS[e.target.selectedIndex];
-                if (preset) {
-                  setProvider(preset.value);
-                  setBaseUrl(preset.defaultBaseUrl);
-                  setModel(preset.defaultModel);
-                }
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {PROVIDER_PRESETS.map((p) => (
-                <option key={p.id} value={p.value}>{p.label}</option>
-              ))}
-            </select>
+              readOnly
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+            />
           </div>
 
-          {/* Base URL */}
+          {/* Base URL — 只读 */}
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-gray-600">Base URL</label>
+            <label className="block text-sm font-medium text-gray-600">
+              Base URL
+              <span className="ml-1 text-xs text-gray-400">（config.json）</span>
+            </label>
             <input
               type="text"
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.deepseek.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              readOnly
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
             />
           </div>
 
-          {/* Model */}
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-gray-600">Model</label>
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="deepseek-v4-pro"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          {/* Model + Max Tokens — 只读 */}
+          <div className="flex gap-2">
+            <div className="flex-1 space-y-1.5">
+              <label className="block text-sm font-medium text-gray-600">
+                Model
+                <span className="ml-1 text-xs text-gray-400">（config.json）</span>
+              </label>
+              <input
+                type="text"
+                value={model}
+                readOnly
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+              />
+            </div>
+            {maxTokens !== null && (
+              <div className="w-24 space-y-1.5">
+                <label className="block text-sm font-medium text-gray-600">
+                  Tokens
+                </label>
+                <input
+                  type="text"
+                  value={maxTokens.toLocaleString()}
+                  readOnly
+                  className="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed text-center"
+                />
+              </div>
+            )}
           </div>
 
-          {/* API Key */}
+          {/* API Key — 可编辑 */}
           <div className="space-y-1.5">
             <label className="block text-sm font-medium text-gray-600">
               API Key
@@ -233,54 +220,39 @@ export function SettingsModal({ open, onClose }: Props) {
         <fieldset className="space-y-4">
           <legend className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Knowledge Graph</legend>
 
-          {/* Transport 协议选择 */}
+          {/* Transport — 只读 */}
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-gray-600">MCP 协议</label>
+            <label className="block text-sm font-medium text-gray-600">
+              MCP 协议
+              <span className="ml-1 text-xs text-gray-400">（config.json）</span>
+            </label>
             <div className="flex gap-2">
-              <label className={`flex-1 flex items-center justify-center px-3 py-2 border rounded-lg text-sm cursor-pointer transition-colors ${transport === "streamable-http" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
-                <input
-                  type="radio"
-                  name="transport"
-                  value="streamable-http"
-                  checked={transport === "streamable-http"}
-                  onChange={() => { setTransport("streamable-http"); setValidateResult(null); }}
-                  className="sr-only"
-                />
+              <span className={`flex-1 flex items-center justify-center px-3 py-2 border rounded-lg text-sm ${transport === "streamable-http" ? "border-blue-200 bg-blue-50/50 text-blue-600" : "border-gray-200 bg-gray-50 text-gray-400"}`}>
                 Streamable HTTP
-              </label>
-              <label className={`flex-1 flex items-center justify-center px-3 py-2 border rounded-lg text-sm cursor-pointer transition-colors ${transport === "sse" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
-                <input
-                  type="radio"
-                  name="transport"
-                  value="sse"
-                  checked={transport === "sse"}
-                  onChange={() => { setTransport("sse"); setValidateResult(null); }}
-                  className="sr-only"
-                />
+              </span>
+              <span className={`flex-1 flex items-center justify-center px-3 py-2 border rounded-lg text-sm ${transport === "sse" ? "border-blue-200 bg-blue-50/50 text-blue-600" : "border-gray-200 bg-gray-50 text-gray-400"}`}>
                 SSE
-              </label>
+              </span>
             </div>
           </div>
 
+          {/* Endpoint URL — 只读 */}
           <div className="space-y-1.5">
             <label className="block text-sm font-medium text-gray-600">
               Endpoint URL
-              <span className="ml-1 text-xs text-gray-400">
-                {transport === "sse" ? "（SSE endpoint，如 /sse）" : "（HTTP endpoint）"}
-              </span>
+              <span className="ml-1 text-xs text-gray-400">（config.json）</span>
             </label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={kgUrl}
-                onChange={(e) => { setKgUrl(e.target.value); setValidateResult(null); }}
-                placeholder={transport === "sse" ? "https://your-kg-host/sse" : "https://your-kg-host/mcp"}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                readOnly
+                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
               />
               <button
                 type="button"
                 onClick={handleValidate}
-                disabled={validating}
+                disabled={validating || !kgUrl}
                 className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 whitespace-nowrap"
               >
                 {validating ? "测试中..." : "测试连接"}
@@ -293,7 +265,7 @@ export function SettingsModal({ open, onClose }: Props) {
             )}
           </div>
 
-          {/* KG API Key */}
+          {/* KG API Key — 可编辑 */}
           <div className="space-y-1.5">
             <label className="block text-sm font-medium text-gray-600">
               API Key
@@ -322,25 +294,7 @@ export function SettingsModal({ open, onClose }: Props) {
         <fieldset className="space-y-4">
           <legend className="text-sm font-semibold text-gray-500 uppercase tracking-wide">公开访问</legend>
 
-          {/* 展示会话 Demo */}
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-gray-600">展示会话（Demo）</label>
-            <select
-              value={demoSessionId}
-              onChange={(e) => setDemoSessionId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="">未选择</option>
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.title} ({new Date(s.updated_at).toLocaleDateString()})
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-400">HR 通过分享链接可只读查看此会话（不计次数）</p>
-          </div>
-
-          {/* Admin Token */}
+          {/* Admin Token — 可编辑 */}
           <div className="space-y-1.5">
             <label className="block text-sm font-medium text-gray-600">
               管理令牌（Admin Token）
@@ -353,7 +307,7 @@ export function SettingsModal({ open, onClose }: Props) {
               placeholder={adminTokenConfigured ? "输入新值以更新" : "留空则不启用门禁"}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <p className="text-xs text-gray-400">配置后管理端需 X-Admin-Token 头；公网部署建议设置</p>
+            <p className="text-xs text-gray-400">首次启动自动生成；公网部署建议设置</p>
           </div>
         </fieldset>
 
@@ -367,8 +321,8 @@ export function SettingsModal({ open, onClose }: Props) {
         {/* 提示 */}
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
           <p className="text-xs text-gray-500 leading-relaxed">
-            所有配置存储在本地 <code className="text-gray-700 bg-gray-100 px-1 rounded">data/settings.json</code>，
-            不会上传到任何服务器。
+            Provider / Model / KG Endpoint 等基础设施配置在 <code className="text-gray-700 bg-gray-100 px-1 rounded">config.json</code>，
+            API Key 和 Admin Token 存储于 <code className="text-gray-700 bg-gray-100 px-1 rounded">data/settings.json</code>。
           </p>
         </div>
 
@@ -385,7 +339,7 @@ export function SettingsModal({ open, onClose }: Props) {
             disabled={saving}
             className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {saving ? "保存中..." : "保存"}
+            {saving ? "保存中..." : "保存凭据"}
           </button>
         </div>
       </div>

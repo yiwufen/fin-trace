@@ -24,6 +24,10 @@ export interface AppConfig {
       knowledge_graph: McpServerConfig;
     };
   };
+  // A2A 入站鉴权：未配置则不鉴权（本地开发）
+  a2a?: {
+    inbound_token?: string;
+  };
 }
 
 let _config: AppConfig | null = null;
@@ -55,22 +59,13 @@ export function readConfig(): AppConfig {
     delete servers["knowledge-graph"];
   }
 
-  // settings.json 覆盖 config.json 中的 LLM 和 MCP 字段
+  // 只从 settings.json 补 api_key（凭据），不覆盖基础设施字段
   const settings = readSettings();
-  if (settings.llm) {
-    parsed.llm = { ...parsed.llm };
-    if (settings.llm.provider) parsed.llm.provider = settings.llm.provider;
-    if (settings.llm.base_url) parsed.llm.base_url = settings.llm.base_url;
-    if (settings.llm.model) parsed.llm.model = settings.llm.model;
-    // api_key 不挂到 config 上，由 getApiKey() 单独处理
-  }
-  if (settings.mcp?.knowledge_graph_url || settings.mcp?.api_key || settings.mcp?.transport) {
+  if (settings.mcp?.api_key) {
     parsed.mcp = { ...parsed.mcp, servers: { ...parsed.mcp.servers } };
     parsed.mcp.servers.knowledge_graph = {
       ...parsed.mcp.servers.knowledge_graph,
-      ...(settings.mcp.knowledge_graph_url ? { url: settings.mcp.knowledge_graph_url } : {}),
-      ...(settings.mcp.transport ? { transport: settings.mcp.transport } : {}),
-      ...(settings.mcp.api_key ? { api_key: settings.mcp.api_key } : {}),
+      api_key: settings.mcp.api_key,
     };
   }
 
