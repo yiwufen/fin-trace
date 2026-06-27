@@ -25,6 +25,10 @@ interface SessionData {
   isProcessing: boolean;
   segments: TurnSegment[];
   es: EventSource | null;
+  /** SSE 断线后正在尝试重连 */
+  reconnecting: boolean;
+  /** 重连定时器句柄 */
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
 }
 
 function createSessionData(): SessionData {
@@ -33,6 +37,8 @@ function createSessionData(): SessionData {
     isProcessing: false,
     segments: [],
     es: null,
+    reconnecting: false,
+    reconnectTimer: null,
   };
 }
 
@@ -105,7 +111,9 @@ export default function App() {
     const data = sessionsRef.current.get(sessionId);
     if (!data) return;
     if (data.es) { data.es.close(); data.es = null; }
+    if (data.reconnectTimer) { clearTimeout(data.reconnectTimer); data.reconnectTimer = null; }
     data.isProcessing = false;
+    data.reconnecting = false;
     data.segments = [];
 
     // 同步缓存
@@ -116,6 +124,10 @@ export default function App() {
     // 刷新会话列表
     refreshSessions();
   }, [syncView, refreshSessions]);
+
+  // ─── 断线恢复核心：查后端真实状态，决定重连还是收尾 ───
+  // 通过 ref 暴露给 connectSSE 的 onConnectionLost（避免循环依赖）
+  const recoverRef = useRef<((sessionId: string) => void) | null>(null);
 
   /** 从 segments 构建最终的 ChatMessage[] */
   const buildFinalMessage = useCallback((sessionId: string) => {
@@ -273,12 +285,74 @@ export default function App() {
       onConnectionLost: () => {
         const d = sessionsRef.current.get(sessionId);
         if (!d || !d.isProcessing) return;
-        buildFinalMessage(sessionId);
-        finishTurn(sessionId);
+        // 不判死：后端可能仍在跑。标记重连中，启动指数退避。
+        if (d.es) { d.es.close(); d.es = null; }
+        d.reconnecting = true;
+        syncView(sessionId);
+
+        const scheduleRecover = (attempt: number) => {
+          if (attempt >= 3) {
+            recoverRef.current?.(sessionId);
+            return;
+          }
+          const delay = 5000 * Math.pow(2, attempt); // 5s, 10s, 20s
+          d.reconnectTimer = setTimeout(() => {
+            const cur = sessionsRef.current.get(sessionId);
+            if (!cur || !cur.isProcessing) return;
+            recoverRef.current?.(sessionId);
+          }, delay);
+        };
+        scheduleRecover(0);
       },
     });
     return es;
   }, [syncView, finishTurn, buildFinalMessage]);
+
+  // attemptRecover：查后端真实状态，running 则重连 SSE，否则收尾
+  const attemptRecover = useCallback(async (sessionId: string) => {
+    const d = sessionsRef.current.get(sessionId);
+    if (!d || !d.isProcessing) return;
+    try {
+      const { running } = await getSessionStatus(sessionId);
+      if (!d.isProcessing) return; // 期间可能已被 finishTurn
+      if (running) {
+        d.reconnecting = true;
+        if (d.reconnectTimer) { clearTimeout(d.reconnectTimer); d.reconnectTimer = null; }
+        d.segments = [];
+        d.es = connectSSE(sessionId);
+        syncView(sessionId);
+      } else {
+        // 后端已结束 → 拉最终结果收尾
+        const session = await getSession(sessionId);
+        const msgs = session?.messages ?? [];
+        messageCache.current.set(sessionId, msgs);
+        pruneCache();
+        if (d.messages.length === 0) d.messages = msgs;
+        finishTurn(sessionId);
+      }
+    } catch {
+      // 查询失败：保守收尾，避免永久卡死
+      finishTurn(sessionId);
+    }
+  }, [connectSSE, syncView, finishTurn]);
+
+  // 暴露给 onConnectionLost
+  useEffect(() => { recoverRef.current = attemptRecover; }, [attemptRecover]);
+
+  // ─── 页面重新可见时，对活跃会话做断线恢复 ───
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const id = activeIdRef.current;
+      if (!id) return;
+      const d = sessionsRef.current.get(id);
+      if (!d || !d.isProcessing) return;
+      if (d.es && d.es.readyState !== EventSource.CLOSED) return;
+      attemptRecover(id);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [attemptRecover]);
 
   // ─── 核心操作：发送消息 ───
 

@@ -19,6 +19,7 @@ const MIME_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -64,8 +65,11 @@ export function handleStatic(req: IncomingMessage, res: ServerResponse): boolean
     const ext = extname(filePath);
     const mime = MIME_TYPES[ext] ?? "application/octet-stream";
 
-    // 静态资源带 hash，可长缓存
-    const cacheControl = /\.(js|css|svg|png|jpg|woff2?|ico)$/i.test(ext)
+    // 静态资源带 hash，可长缓存。
+    // 例外: sw.js 必须可更新（否则浏览器拿不到新 SW），固定名文件走 no-cache。
+    const baseName = path.split("/").pop() ?? "";
+    const isFixedName = baseName === "sw.js" || baseName === "manifest.webmanifest";
+    const cacheControl = !isFixedName && /\.(js|css|svg|png|jpg|woff2?|ico)$/i.test(ext)
       ? "public, max-age=31536000, immutable"
       : "no-cache";
 

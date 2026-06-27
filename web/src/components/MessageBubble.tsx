@@ -67,7 +67,7 @@ function ContentBlockView({ block }: { block: ChatContentBlock }) {
       return (
         <div className="ml-4 border-l-2 border-blue-200 pl-3 py-1">
           <span className="text-xs text-gray-500 font-medium">
-            graph_explore
+            图谱探索
           </span>
           {block.input.goal != null && (
             <p className="text-xs text-gray-400 mt-0.5">

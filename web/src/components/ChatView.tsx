@@ -89,7 +89,12 @@ function EmptyState() {
   return (
     <div className="flex-1 flex items-center justify-center h-full">
       <div className="text-center space-y-3">
-        <div className="text-4xl">🔍</div>
+        <div className="flex justify-center">
+          <svg className="w-12 h-12" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+            <rect width="48" height="48" rx="10" fill="#863bff" />
+            <path d="M27 10L14 27h7l-2 11 13-17h-7l2-11z" fill="#fff" />
+          </svg>
+        </div>
         <h2 className="text-lg font-semibold text-gray-700">Graph Explorer</h2>
         <p className="text-sm text-gray-400 max-w-sm">
           描述你想探索的问题，Agent 会在金融知识图谱上进行多跳推理
