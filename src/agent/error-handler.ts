@@ -204,6 +204,10 @@ const MAX_EXPLORING_STEPS = 20;
 export function determineCompletionReason(
   state: ExplorationState,
 ): ExplorationOutput["exploration_meta"]["completion_reason"] {
+  // 优先判定 MCP 不可用：连接失败时 step_count===0 且 mcp_degraded===true，
+  // 不能落到 diminishing_returns（一步未走却报"边际递减"是矛盾信号）
+  if (state.mcp_degraded && state.step_count === 0) return "mcp_unavailable";
+
   const decision = state.last_n_decisions[state.last_n_decisions.length - 1];
 
   if (decision === "sufficient") return "sufficient";

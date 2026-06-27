@@ -996,7 +996,12 @@ export async function runExploration(
   try {
     await mcpClient.connect();
   } catch (err) {
+    sl.warn(
+      { err: String((err as Error)?.message ?? err) },
+      "MCP 连接失败，探索无法执行（mcp_unavailable）",
+    );
     state.mcp_degraded = true;
+    state.reliability_note = "知识图谱服务连接失败，探索未能执行";
     return { output: assembleOutput(state), state };
   }
 

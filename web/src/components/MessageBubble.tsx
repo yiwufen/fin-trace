@@ -113,6 +113,7 @@ function renderTextBlocks(blocks: ChatContentBlock[]): string {
 export function ExplorationResultInline({ summary }: { summary: ExplorationSummary }) {
   const hasFindings = summary.findings.length > 0;
   const hasThreads = summary.event_threads.length > 0;
+  const isMcpUnavailable = summary.stats.completion_reason === "mcp_unavailable";
 
   return (
     <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-md p-4 space-y-3">
@@ -152,7 +153,13 @@ export function ExplorationResultInline({ summary }: { summary: ExplorationSumma
         </div>
       )}
 
-      {!hasFindings && !hasThreads && (
+      {!hasFindings && !hasThreads && isMcpUnavailable && (
+        <p className="text-sm text-amber-600">
+          知识图谱服务暂不可用，未能执行探索。请稍后重试。
+        </p>
+      )}
+
+      {!hasFindings && !hasThreads && !isMcpUnavailable && (
         <p className="text-sm text-gray-400">未发现相关线索</p>
       )}
     </div>

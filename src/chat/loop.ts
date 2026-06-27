@@ -178,6 +178,9 @@ async function runOuterTurn(
   const newMessages: ChatMessage[] = [];
   const config = readConfig();
   const systemPrompt = getSystemPrompt(mode) + "\n\n" + getEnvironmentContext();
+  // 空响应重试计数：外层 LLM 返回既无 text 也无 tool_use 时，注入提醒重试一次
+  let emptyResponseRetries = 0;
+  const MAX_EMPTY_RETRIES = 1;
 
   while (true) {
     // 检查取消信号
@@ -255,6 +258,19 @@ async function runOuterTurn(
 
     // 无 tool call → turn 结束
     if (toolUseBlocks.length === 0) {
+      // 空响应兜底：既无文本也无工具调用（常见于 DeepSeek 内容审核/空回复）
+      // 注入一条 user 提醒重试一次，避免 turn 静默结束、用户看不到总结
+      if (contentBlocks.length === 0 && emptyResponseRetries < MAX_EMPTY_RETRIES) {
+        emptyResponseRetries++;
+        apiMessages.push({
+          role: "user",
+          content:
+            "你刚才的回复为空。请基于已有的探索结果给出自然语言总结，" +
+            "说明发现了什么、事件脉络如何。如果没有发现，请明确说明并给出可能的原因。",
+        });
+        continue;
+      }
+
       const msg: ChatMessage = {
         role: "assistant",
         content: contentBlocks.length === 0 ? fullText : contentBlocks,
@@ -265,6 +281,9 @@ async function runOuterTurn(
       // 异步持久化到 session（调用方负责）
       break;
     }
+
+    // 收到有效内容（有 tool call），重置空响应计数
+    emptyResponseRetries = 0;
 
     // 构建 assistant ChatMessage（先把 text + tool_use 部分写入）
     const assistantMsg: ChatMessage = {

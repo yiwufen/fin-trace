@@ -35,7 +35,7 @@ export interface ExplorationOutput {
   findings: Finding[];
   event_threads: EventThread[];
   exploration_meta: {
-    completion_reason: "sufficient" | "depth_exhausted" | "token_budget" | "frontier_empty" | "diminishing_returns" | "cancelled";
+    completion_reason: "sufficient" | "depth_exhausted" | "token_budget" | "frontier_empty" | "diminishing_returns" | "cancelled" | "mcp_unavailable";
     stats: {
       steps: number;
       entities_visited: number;
