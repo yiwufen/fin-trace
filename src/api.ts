@@ -85,21 +85,41 @@ function removeSSEConnection(sessionId: string, res: ServerResponse): void {
 }
 
 function broadcastSSE(sessionId: string, eventType: string, data: unknown): void {
-  // 仅缓冲关键事件用于 SSE 重放（text_delta/tool_start/tool_result 量大且不需重放）
-  if (eventType === "step" || eventType === "finalize" || eventType === "complete" || eventType === "message_complete") {
-    let buffer = stepBuffers.get(sessionId);
-    if (!buffer) {
-      buffer = [];
-      stepBuffers.set(sessionId, buffer);
+  // 缓冲所有事件用于断线重连重放。
+  // 结构事件（step/finalize/complete/message_complete/tool_start/tool_result/error）永久保留（数量少）。
+  // text_delta 量大，按累计字节上限控制：超过 TEXT_BYTE_BUDGET 时丢弃最早的 text_delta。
+  let buffer = stepBuffers.get(sessionId);
+  if (!buffer) {
+    buffer = [];
+    stepBuffers.set(sessionId, buffer);
+  }
+  const payloadStr = JSON.stringify(data);
+  const bytes = payloadStr.length;
+  buffer.push({ eventType, data, bytes });
+
+  // 仅对 text_delta 做字节预算控制
+  if (eventType === "text_delta") {
+    let textBytes = 0;
+    for (const e of buffer) if (e.eventType === "text_delta") textBytes += e.bytes;
+    // 超预算时从头删除 text_delta（保留结构事件）
+    while (textBytes > TEXT_BYTE_BUDGET) {
+      const idx = buffer.findIndex((e) => e.eventType === "text_delta");
+      if (idx === -1) break;
+      textBytes -= buffer[idx].bytes;
+      buffer.splice(idx, 1);
     }
-    buffer.push({ eventType, data });
-    if (buffer.length > 50) buffer.splice(0, buffer.length - 50);
+  }
+  // 结构事件硬上限（防御性，正常不会触发）
+  const structCount = buffer.filter((e) => e.eventType !== "text_delta").length;
+  if (structCount > 200) {
+    const firstStructIdx = buffer.findIndex((e) => e.eventType !== "text_delta");
+    if (firstStructIdx !== -1) buffer.splice(firstStructIdx, 1);
   }
 
   // 推送给已连接的客户端
   const set = sseConnections.get(sessionId);
   if (!set) return;
-  const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  const payload = `event: ${eventType}\ndata: ${payloadStr}\n\n`;
   for (const res of set) {
     try {
       res.write(payload);
@@ -113,9 +133,18 @@ function broadcastSSE(sessionId: string, eventType: string, data: unknown): void
 
 const runningExplorations = new Map<string, { explorationId: string; abortController: AbortController }>();
 
-// ─── SSE 步骤缓冲 — 新连接建立时重放未消费的事件 ───
+// ─── SSE 事件缓冲 — 新连接建立时重放未消费的事件 ───
+// 缓冲所有事件类型（含 text_delta），以便断线重连后完整恢复流式输出。
+// text_delta 量大，按累计字节上限控制：超过 TEXT_BYTE_BUDGET 时丢弃最早的 text_delta。
 
-const stepBuffers = new Map<string, { eventType: string; data: unknown }[]>();
+interface BufferEntry {
+  eventType: string;
+  data: unknown;
+  bytes: number;   // 该条目的近似字节开销
+}
+
+const stepBuffers = new Map<string, BufferEntry[]>();
+const TEXT_BYTE_BUDGET = 65536; // 单 session 的 text_delta 字节上限（64KB ≈ 2 万汉字）
 
 // ─── 追问用的 State 暂存 ───
 
@@ -1073,6 +1102,25 @@ async function handlePublic(
     }
     res.writeHead(201, { ...CORS_HEADERS, "Content-Type": "application/json" });
     res.end(JSON.stringify({ id: session.id, title: session.title, created_at: session.created_at }));
+    return;
+  }
+
+  // GET /api/public/token/:token/sessions/:sessionId/status — 查询会话是否仍在处理
+  // 轻量端点（不读 session 内容），供前端断线重连时判断后端真实状态
+  const sessionStatusMatch = path.match(/^\/api\/public\/token\/([^/]+)\/sessions\/([^/]+)\/status$/);
+  if (sessionStatusMatch && req.method === "GET") {
+    const t = getToken(sessionStatusMatch[1]);
+    if (!t || t.disabled) {
+      sendJSON(res, 404, { error: "链接无效或已禁用" });
+      return;
+    }
+    // 校验会话归属
+    const owned = await getTokenSession(t.token, sessionStatusMatch[2]);
+    if (!owned) {
+      sendJSON(res, 404, { error: "会话不存在" });
+      return;
+    }
+    sendJSON(res, 200, { running: runningExplorations.has(sessionStatusMatch[2]) });
     return;
   }
 

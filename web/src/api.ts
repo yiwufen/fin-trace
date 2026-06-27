@@ -454,6 +454,15 @@ export async function getPublicSessionMessages(token: string, sessionId: string)
   }
 }
 
+/** 访客查询会话是否仍在处理（轻量，用于断线重连判断后端真实状态） */
+export async function getPublicSessionStatus(token: string, sessionId: string): Promise<{ running: boolean }> {
+  try {
+    return await publicRequest<{ running: boolean }>(`/token/${token}/sessions/${sessionId}/status`);
+  } catch {
+    return { running: false };
+  }
+}
+
 /** 访客删除指定会话 */
 export async function deletePublicSession(token: string, sessionId: string): Promise<{ ok: boolean }> {
   return publicRequest(`/token/${token}/sessions/${sessionId}`, { method: "DELETE" });

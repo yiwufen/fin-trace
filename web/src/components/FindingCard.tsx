@@ -5,11 +5,11 @@ interface Props {
   finding: Finding;
 }
 
-const CATEGORY_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
-  pattern_violation: { icon: "x", color: "bg-red-100 text-red-700 border-red-200", label: "模式异常" },
-  concentration: { icon: "!", color: "bg-amber-100 text-amber-700 border-amber-200", label: "集中度" },
-  chain: { icon: "#", color: "bg-blue-100 text-blue-700 border-blue-200", label: "传导链" },
-  absence: { icon: "?", color: "bg-gray-100 text-gray-700 border-gray-200", label: "缺失信号" },
+const CATEGORY_CONFIG: Record<string, { color: string; label: string }> = {
+  pattern_violation: { color: "bg-red-100 text-red-700 border-red-200", label: "模式异常" },
+  concentration: { color: "bg-amber-100 text-amber-700 border-amber-200", label: "集中度" },
+  chain: { color: "bg-blue-100 text-blue-700 border-blue-200", label: "传导链" },
+  absence: { color: "bg-gray-100 text-gray-700 border-gray-200", label: "缺失信号" },
 };
 
 const CONFIDENCE_CONFIG: Record<string, { color: string; label: string }> = {
@@ -61,9 +61,16 @@ export function FindingCard({ finding }: Props) {
           </button>
           {evidenceExpanded && (
             <div className="mt-1 space-y-1">
-              {finding.evidence.map((kuId) => (
-                <div key={kuId} className="text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded font-mono">
-                  {kuId}
+              {finding.evidence.map((kuId, idx) => (
+                <div
+                  key={kuId}
+                  className="text-xs text-gray-600 bg-gray-50 px-2 py-1 rounded flex items-center gap-1.5"
+                  title={`知识单元 ID：${kuId}`}
+                >
+                  <svg className="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span>证据 {idx + 1}</span>
                 </div>
               ))}
             </div>
