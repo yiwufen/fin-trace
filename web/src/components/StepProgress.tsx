@@ -112,7 +112,15 @@ export function StepProgress({ step, compact }: Props) {
         {step.new_findings_count != null && step.new_findings_count > 0 && (
           <span className="text-xs text-amber-600">+{step.new_findings_count} 发现</span>
         )}
-        <span className="ml-auto text-gray-300 text-xs">{expanded ? "▲" : "▼"}</span>
+        <svg
+          className={`ml-auto w-3.5 h-3.5 text-gray-300 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-label={expanded ? "收起" : "展开"}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
       </div>
 
       {expanded && !compact && (

@@ -12,6 +12,8 @@ interface Props {
   segments: TurnSegment[];
   onSend: (text: string) => void;
   onStop: () => void;
+  /** 处理中但实际是断线重连状态（非活跃任务） */
+  reconnecting?: boolean;
 }
 
 export function ChatView({
@@ -20,6 +22,7 @@ export function ChatView({
   segments,
   onSend,
   onStop,
+  reconnecting,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -80,7 +83,7 @@ export function ChatView({
         )}
       </div>
 
-      <ChatInput onSend={onSend} isProcessing={isProcessing} onStop={onStop} />
+      <ChatInput onSend={onSend} isProcessing={isProcessing} reconnecting={reconnecting} onStop={onStop} />
     </div>
   );
 }
