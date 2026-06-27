@@ -25,6 +25,14 @@
   <img src="docs/demo.gif" alt="Graph Explorer Demo" width="720">
 </p>
 
+### Playground
+
+直接在浏览器里试用，无需本地部署：
+
+> 🔗 https://fin.182-61-1-77.nip.io/s/6ivLlHN0i-ivP-NBO8ZB2kpb
+
+限量 10 次使用。
+
 ---
 
 ## 问题
