@@ -616,6 +616,7 @@ export function ShareView({ token }: Props) {
           segments={viewSegments}
           onSend={exhausted ? () => {} : handleSend}
           onStop={handleStop}
+          reconnecting={reconnectingBanner}
         />
         {/* 重连提示横幅：SSE 断线后正在恢复 */}
         {reconnectingBanner && (

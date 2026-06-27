@@ -3,10 +3,12 @@ import { useState, useRef, useCallback } from "react";
 interface Props {
   onSend: (text: string) => void;
   isProcessing?: boolean;
+  /** 处理中但实际是断线重连状态（非活跃任务） */
+  reconnecting?: boolean;
   onStop?: () => void;
 }
 
-export function ChatInput({ onSend, isProcessing, onStop }: Props) {
+export function ChatInput({ onSend, isProcessing, reconnecting, onStop }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,18 +45,29 @@ export function ChatInput({ onSend, isProcessing, onStop }: Props) {
           value={isProcessing ? "" : text}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder={isProcessing ? "思考中..." : "输入消息，如：分析宁德时代供应链风险"}
+          placeholder={isProcessing ? (reconnecting ? "正在恢复连接…" : "思考中...") : "输入消息，如：分析宁德时代供应链风险"}
           disabled={isProcessing}
           rows={1}
           className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-400 resize-none"
         />
         {isProcessing ? (
-          <button
-            onClick={onStop}
-            className="px-5 py-2.5 bg-red-600 text-white text-sm rounded-xl hover:bg-red-700 transition-colors font-medium shrink-0"
-          >
-            停止
-          </button>
+          // 重连期间：灰色弱化的"取消重连"，区别于活跃任务的红色"停止"
+          // 用户仍可放弃重连，但视觉上明确这不是"取消正在跑的探索"
+          reconnecting ? (
+            <button
+              onClick={onStop}
+              className="px-4 py-2.5 bg-gray-200 text-gray-600 text-sm rounded-xl hover:bg-gray-300 transition-colors font-medium shrink-0"
+            >
+              取消重连
+            </button>
+          ) : (
+            <button
+              onClick={onStop}
+              className="px-5 py-2.5 bg-red-600 text-white text-sm rounded-xl hover:bg-red-700 transition-colors font-medium shrink-0"
+            >
+              停止
+            </button>
+          )
         ) : (
           <button
             onClick={handleSend}
