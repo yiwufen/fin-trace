@@ -215,7 +215,8 @@ export interface ChatSSEHandlers {
   onToolResult: (event: unknown) => void;
   onStep: (event: unknown) => void;
   onFinalize: (event: unknown) => void;
-  onMessageComplete: () => void;
+  /** 探索/聊天 turn 完成。payload.messages 为后端权威最终消息（可能缺失）。 */
+  onMessageComplete: (payload?: { messages?: ChatMessage[] }) => void;
   onError: (error: string) => void;
   onConnectionLost?: () => void;
 }
@@ -249,8 +250,14 @@ export function createChatSSEConnection(
     handlers.onFinalize(JSON.parse(e.data));
   });
 
-  es.addEventListener("message_complete", () => {
-    handlers.onMessageComplete();
+  es.addEventListener("message_complete", (e) => {
+    let payload: { messages?: ChatMessage[] } | undefined;
+    try {
+      payload = e.data ? JSON.parse(e.data) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    handlers.onMessageComplete(payload);
   });
 
   es.addEventListener("error", (e) => {
@@ -401,8 +408,14 @@ export function createPublicSSEConnection(
     handlers.onFinalize(JSON.parse(e.data));
   });
 
-  es.addEventListener("message_complete", () => {
-    handlers.onMessageComplete();
+  es.addEventListener("message_complete", (e) => {
+    let payload: { messages?: ChatMessage[] } | undefined;
+    try {
+      payload = e.data ? JSON.parse(e.data) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    handlers.onMessageComplete(payload);
   });
 
   es.addEventListener("error", (e) => {
@@ -597,7 +610,15 @@ export function createUserSSEConnection(sessionId: string, handlers: ChatSSEHand
   es.addEventListener("tool_result", (e) => handlers.onToolResult(JSON.parse(e.data)));
   es.addEventListener("step", (e) => handlers.onStep(JSON.parse(e.data)));
   es.addEventListener("finalize", (e) => handlers.onFinalize(JSON.parse(e.data)));
-  es.addEventListener("message_complete", () => handlers.onMessageComplete());
+  es.addEventListener("message_complete", (e) => {
+    let payload: { messages?: ChatMessage[] } | undefined;
+    try {
+      payload = e.data ? JSON.parse(e.data) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    handlers.onMessageComplete(payload);
+  });
   es.addEventListener("error", (e) => {
     if (es.readyState === EventSource.CLOSED) {
       handlers.onConnectionLost?.();

@@ -291,8 +291,17 @@ export default function App() {
         // tool_result 已携带完整 summary，finalize 仅作为完成信号
       },
 
-      onMessageComplete: () => {
-        buildFinalMessage(sessionId);
+      onMessageComplete: (payload) => {
+        const d = sessionsRef.current.get(sessionId);
+        if (d) {
+          // 后端权威：优先采用 payload.messages，避免 segments 重建在
+          // text_delta 丢失（DeepSeek 空响应 / SSE 断线 buffer 截断）时为空
+          if (payload?.messages && payload.messages.length > 0) {
+            d.messages.push(...payload.messages);
+          } else {
+            buildFinalMessage(sessionId);
+          }
+        }
         finishTurn(sessionId);
       },
 

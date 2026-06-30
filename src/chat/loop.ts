@@ -436,6 +436,9 @@ async function runOuterTurn(
     // 继续 while — LLM 看到探索结果后生成文本回复
   }
 
-  broadcast("message_complete", {});
+  // 携带权威最终消息：前端优先采用此 payload 重建消息，
+  // 避免 text_delta 流丢失（DeepSeek 空响应 / SSE 断线 buffer 预算截断）时
+  // 最终总结只在刷新后才显示。
+  broadcast("message_complete", { messages: newMessages });
   return newMessages;
 }

@@ -105,6 +105,53 @@ export function ShareView({ token }: Props) {
     setTokenError(null);
   }, [token]);
 
+  // ─── 完成一轮处理 ───
+  const finishTurn = useCallback((sessionId: string) => {
+    const d = sessionsRef.current.get(sessionId);
+    if (!d) return;
+    if (d.es) { d.es.close(); d.es = null; }
+    if (d.reconnectTimer) { clearTimeout(d.reconnectTimer); d.reconnectTimer = null; }
+    d.isProcessing = false;
+    d.reconnecting = false;
+    d.reconnectAttempts = 0;
+    d.segments = [];
+    syncView(sessionId);
+    refreshInfo();
+    listPublicSessions(token).then(setSessions).catch(() => {});
+  }, [syncView, refreshInfo, token]);
+
+  // ─── 从 segments 构建最终 ChatMessage[]（兜底：后端权威 payload 缺失时）───
+  const buildFinalMessage = useCallback((sessionId: string) => {
+    const d = sessionsRef.current.get(sessionId);
+    if (!d || !d.isProcessing) return;
+
+    const segs = d.segments;
+    if (segs.length === 0) return;
+
+    const assistantBlocks: ChatContentBlock[] = [];
+    const toolResultBlocks: { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }[] = [];
+
+    for (const seg of segs) {
+      if (seg.type === "text") {
+        if (seg.text) assistantBlocks.push({ type: "text", text: seg.text });
+      } else {
+        assistantBlocks.push({ type: "tool_use", id: seg.tool_use_id, name: seg.tool_name, input: seg.args });
+        if (seg.result) {
+          toolResultBlocks.push({ type: "tool_result", tool_use_id: seg.tool_use_id, content: JSON.stringify(seg.result) });
+        } else if (seg.status === "error") {
+          toolResultBlocks.push({ type: "tool_result", tool_use_id: seg.tool_use_id, content: seg.error ?? "探索失败", is_error: true });
+        }
+      }
+    }
+
+    if (assistantBlocks.length > 0) {
+      d.messages.push({ role: "assistant", content: assistantBlocks, created_at: new Date().toISOString() });
+    }
+    if (toolResultBlocks.length > 0) {
+      d.messages.push({ role: "user", content: toolResultBlocks, created_at: new Date().toISOString() });
+    }
+  }, []);
+
   // ─── SSE 连接工厂（回调更新 sessionsRef，通过 syncView 驱动视图）───
 
   const connectSSE = useCallback((sessionId: string): EventSource => {
@@ -161,39 +208,18 @@ export function ShareView({ token }: Props) {
         syncView(sessionId);
       },
       onFinalize: () => {},
-      onMessageComplete: () => {
+      onMessageComplete: (payload) => {
         const d = sessionsRef.current.get(sessionId);
-        if (!d) return;
-        // 用当前 segments 构建最终消息
-        const segs = d.segments;
-        if (segs.length > 0) {
-          const assistantBlocks: ChatContentBlock[] = [];
-          const toolResultBlocks: { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }[] = [];
-          for (const seg of segs) {
-            if (seg.type === "text") {
-              if (seg.text) assistantBlocks.push({ type: "text", text: seg.text });
-            } else {
-              assistantBlocks.push({ type: "tool_use", id: seg.tool_use_id, name: seg.tool_name, input: seg.args });
-              if (seg.result) {
-                toolResultBlocks.push({ type: "tool_result", tool_use_id: seg.tool_use_id, content: JSON.stringify(seg.result) });
-              } else if (seg.status === "error") {
-                toolResultBlocks.push({ type: "tool_result", tool_use_id: seg.tool_use_id, content: seg.error ?? "探索失败", is_error: true });
-              }
-            }
-          }
-          if (assistantBlocks.length > 0) {
-            d.messages.push({ role: "assistant", content: assistantBlocks, created_at: new Date().toISOString() });
-          }
-          if (toolResultBlocks.length > 0) {
-            d.messages.push({ role: "user", content: toolResultBlocks, created_at: new Date().toISOString() });
+        if (d) {
+          // 后端权威：优先采用 payload.messages，避免 segments 重建在
+          // text_delta 丢失（DeepSeek 空响应 / SSE 断线 buffer 截断）时为空
+          if (payload?.messages && payload.messages.length > 0) {
+            d.messages.push(...payload.messages);
+          } else {
+            buildFinalMessage(sessionId);
           }
         }
-        if (d.es) { d.es.close(); d.es = null; }
-        d.isProcessing = false;
-        d.segments = [];
-        syncView(sessionId);
-        refreshInfo();
-        listPublicSessions(token).then(setSessions).catch(() => {});
+        finishTurn(sessionId);
       },
       onError: (error) => {
         const d = sessionsRef.current.get(sessionId);
@@ -233,22 +259,7 @@ export function ShareView({ token }: Props) {
       },
     });
     return es;
-  }, [token, syncView, refreshInfo]);
-
-  // ─── 完成一轮处理 ───
-  const finishTurn = useCallback((sessionId: string) => {
-    const d = sessionsRef.current.get(sessionId);
-    if (!d) return;
-    if (d.es) { d.es.close(); d.es = null; }
-    if (d.reconnectTimer) { clearTimeout(d.reconnectTimer); d.reconnectTimer = null; }
-    d.isProcessing = false;
-    d.reconnecting = false;
-    d.reconnectAttempts = 0;
-    d.segments = [];
-    syncView(sessionId);
-    refreshInfo();
-    listPublicSessions(token).then(setSessions).catch(() => {});
-  }, [syncView, refreshInfo, token]);
+  }, [token, syncView, refreshInfo, buildFinalMessage, finishTurn]);
 
   // ─── 断线恢复核心：查后端真实状态，决定重连还是收尾 ───
   // 通过 ref 暴露给 connectSSE 的 onConnectionLost（避免循环依赖）
