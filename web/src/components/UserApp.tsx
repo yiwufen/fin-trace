@@ -35,24 +35,6 @@ export function UserApp() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // ─── 动态 manifest：让 Android 安装后从 /app 启动（而非 / 管理后台）───
-  // 静态 manifest 的 start_url 是 "/"，用户安装后点图标会进 admin 登录页，体验错误。
-  // 挂载时生成 blob manifest，start_url=/app，确保图标直接进用户会话。
-  useEffect(() => {
-    const link = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
-    if (!link) return;
-    const originalHref = link.href;
-    fetch("/manifest.webmanifest")
-      .then((r) => r.json())
-      .then((manifest) => {
-        const customized = { ...manifest, start_url: "/app", scope: "/app" };
-        const blob = new Blob([JSON.stringify(customized)], { type: "application/manifest+json" });
-        link.href = URL.createObjectURL(blob);
-      })
-      .catch(() => { /* 静态 manifest 回退 */ });
-    return () => { link.href = originalHref; };
-  }, []);
-
   // 视图状态
   const [viewMessages, setViewMessages] = useState<ChatMessage[]>([]);
   const [viewProcessing, setViewProcessing] = useState(false);

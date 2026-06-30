@@ -164,7 +164,7 @@ export function UserAuthPage({ mode: initialMode }: Props) {
           </button>
 
           <div className="pt-2 text-center">
-            <a href="/" className="text-xs text-gray-400 hover:text-gray-600">返回首页</a>
+            <a href="/app" className="text-xs text-gray-400 hover:text-gray-600">返回首页</a>
           </div>
         </div>
       </div>

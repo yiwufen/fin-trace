@@ -6,7 +6,7 @@ import type {
 import {
   listSessions, createSession, deleteSession as deleteSessionApi,
   getSession, sendMessage, createChatSSEConnection, getSessionStatus, cancelExploration,
-  AuthError, setAuthLostHandler, logout,
+  AuthError, setAuthLostHandler, logout, getMe,
 } from "./api";
 import { SessionList } from "./components/SessionList";
 import { ChatView } from "./components/ChatView";
@@ -44,6 +44,26 @@ function createSessionData(): SessionData {
     reconnecting: false,
     reconnectTimer: null,
   };
+}
+
+// ─── / 路径重定向：根据用户登录态分流 ───
+// 未登录 → /login；已登录 → /app。
+// 让 / 成为用户主入口，admin 移到 /admin，PWA 安装行为天然正确。
+function RootRedirect() {
+  useEffect(() => {
+    getMe()
+      .then((me) => {
+        window.location.replace(me ? "/app" : "/login");
+      })
+      .catch(() => {
+        window.location.replace("/login");
+      });
+  }, []);
+  return (
+    <div className="h-dvh flex items-center justify-center text-gray-400 text-sm">
+      加载中...
+    </div>
+  );
 }
 
 // ─── App ───
@@ -523,6 +543,18 @@ export default function App() {
   if (path === "/register") return <UserAuthPage mode="register" />;
   if (path === "/app" || path.startsWith("/app")) {
     return <UserGate><UserApp /></UserGate>;
+  }
+
+  // 路由：/ → 用户主入口（PWA 安装的天然起点）
+  // 未登录 → 跳 /login；已登录 → 跳 /app。
+  // 这让 / 的 manifest（start_url=/）安装后直接进用户流程，而非 admin。
+  if (path === "/") {
+    return <RootRedirect />;
+  }
+
+  // 其他非 /admin 路径 → 回用户主入口（避免暴露 admin 给误访问者）
+  if (!path.startsWith("/admin")) {
+    return <RootRedirect />;
   }
 
   if (!loaded) {
