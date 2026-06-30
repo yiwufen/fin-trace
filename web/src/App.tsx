@@ -15,6 +15,10 @@ import { AdminGate } from "./components/AdminGate";
 import { ShareView } from "./components/ShareView";
 import { ShareTokenManager } from "./components/ShareTokenManager";
 import { AuthOverlay } from "./components/AuthOverlay";
+import { UserAuthPage } from "./components/UserAuthPage";
+import { UserGate } from "./components/UserGate";
+import { UserApp } from "./components/UserApp";
+import { UserManageModal } from "./components/UserManageModal";
 
 const MAX_CACHED_SESSIONS = 10;
 
@@ -60,6 +64,7 @@ export default function App() {
   const [segments, setSegments] = useState<TurnSegment[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [userManageOpen, setUserManageOpen] = useState(false);
   const [authLost, setAuthLost] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -513,6 +518,13 @@ export default function App() {
     return <ShareView token={shareMatch[1]} />;
   }
 
+  // 路由：账号体系入口
+  if (path === "/login") return <UserAuthPage mode="login" />;
+  if (path === "/register") return <UserAuthPage mode="register" />;
+  if (path === "/app" || path.startsWith("/app")) {
+    return <UserGate><UserApp /></UserGate>;
+  }
+
   if (!loaded) {
     return <div className="h-dvh flex items-center justify-center text-gray-500">Loading...</div>;
   }
@@ -559,6 +571,16 @@ export default function App() {
               <span>分享</span>
             </button>
             <button
+              onClick={() => setUserManageOpen(true)}
+              className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
+              title="用户管理"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              <span>用户</span>
+            </button>
+            <button
               onClick={() => setSettingsOpen(true)}
               className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
               title="设置"
@@ -592,6 +614,7 @@ export default function App() {
         </main>
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <ShareTokenManager open={shareOpen} onClose={() => setShareOpen(false)} />
+        <UserManageModal open={userManageOpen} onClose={() => setUserManageOpen(false)} />
         {authLost && <AuthOverlay onLoginSuccess={() => setAuthLost(false)} />}
       </div>
     </AdminGate>

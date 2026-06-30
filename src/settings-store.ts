@@ -28,9 +28,15 @@ export interface SettingsStore {
   // admin_token: 管理 /api/sessions* 的门禁 token；
   //   未配置则不鉴权（本地开发），首次启动自动生成。
   // demo_session_id: 固定为访客展示的「已完成会话」(只读，不计次)。
+  // invite_codes: 生效的注册邀请码（空数组 = 不校验邀请码，开放注册）
+  // user_signup_quota: 新用户注册赠送额度，默认 20
+  // user_registration_enabled: 是否开放注册（false 时注册端点拒绝）
   web?: {
     admin_token?: string;
     demo_session_id?: string;
+    invite_codes?: string[];
+    user_signup_quota?: number;
+    user_registration_enabled?: boolean;
   };
 }
 
