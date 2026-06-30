@@ -67,7 +67,10 @@ jobs:
             mv ~/.docker/config.json.bak ~/.docker/config.json 2>/dev/null || true
 
             echo "==> Deploy"
-            docker compose pull
+            # docker compose pull 可能因 Docker Hub 网络问题失败（registry-1.docker.io EOF），
+            # 但镜像已在 localhost:5000（上一步 push 成功），up 时会从本地 registry 拉取。
+            # 故 pull 失败不阻塞部署。
+            docker compose pull || echo "==> (pull 失败，继续用本地 registry 镜像)"
             docker compose up -d --remove-orphans
 
             echo "==> Cleanup old images"
