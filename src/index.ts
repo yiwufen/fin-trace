@@ -18,6 +18,7 @@ import { buildAgentCard } from "./a2a/agent-card.js";
 import { handleMcpRequest, initMcpServer } from "./mcp-server.js";
 import { readSettings, writeSettings } from "./settings-store.js";
 import { migrateUsers } from "./user-store.js";
+import { migrateUserSessions } from "./auth/session.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("init");
@@ -57,6 +58,7 @@ async function openBrowser(url: string): Promise<void> {
 async function main() {
   ensureConfig();
   migrateUsers();
+  migrateUserSessions();
 
   // 公网部署若未设置 admin_token，自动生成并持久化（仅首次）
   // 这样管理端默认受保护；可在设置页查看/更新。
