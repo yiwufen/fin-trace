@@ -54,7 +54,8 @@ import {
   getAllTokenSessions,
   clearTokenSessions,
 } from "./share-store.js";
-import { listUsers, disableUser, setUserQuota, deleteUser } from "./user-store.js";
+import { listUsers, disableUser, setUserQuota, deleteUser, setUserPassword } from "./user-store.js";
+import { hashPassword } from "./auth/password.js";
 import { handleAccount } from "./account-handler.js";
 import { handleUserMessage } from "./chat/loop.js";
 import type { ChatMessage } from "./chat/types.js";
@@ -1342,7 +1343,7 @@ async function handleAdminUsers(
   const url = req.url ?? "/";
   const path = url.split("?")[0];
 
-  // GET /api/admin/users — 用户列表
+  // GET /api/admin/users — 用户列表（含活跃度/会话数统计，无对话内容）
   if (path === "/api/admin/users" && req.method === "GET") {
     const users = listUsers().map((u) => ({
       id: u.id,
@@ -1350,8 +1351,10 @@ async function handleAdminUsers(
       display_name: u.display_name,
       usage_limit: u.usage_limit,
       usage_count: u.usage_count,
+      session_count: u.session_ids.length,
       disabled: u.disabled,
       created_at: u.created_at,
+      last_active_at: u.last_active_at,
     }));
     res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
     res.end(JSON.stringify(users));
@@ -1364,13 +1367,17 @@ async function handleAdminUsers(
     const userId = userMatch[1];
     if (req.method === "PATCH") {
       const body = await readBody(req);
-      const { disabled, usage_limit } = JSON.parse(body || "{}");
+      const { disabled, usage_limit, new_password } = JSON.parse(body || "{}");
       let updated = null;
       if (typeof disabled === "boolean") {
         updated = disableUser(userId, disabled);
       }
       if (typeof usage_limit === "number") {
         updated = setUserQuota(userId, usage_limit);
+      }
+      if (typeof new_password === "string" && new_password.length >= 8) {
+        const passwordHash = await hashPassword(new_password);
+        updated = setUserPassword(userId, passwordHash);
       }
       if (!updated) {
         sendJSON(res, 404, { error: "用户不存在" });

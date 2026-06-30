@@ -19,6 +19,7 @@ import { UserAuthPage } from "./components/UserAuthPage";
 import { UserGate } from "./components/UserGate";
 import { UserApp } from "./components/UserApp";
 import { UserManageModal } from "./components/UserManageModal";
+import { OnboardingPage } from "./components/OnboardingPage";
 
 const MAX_CACHED_SESSIONS = 10;
 
@@ -541,6 +542,7 @@ export default function App() {
   // 路由：账号体系入口
   if (path === "/login") return <UserAuthPage mode="login" />;
   if (path === "/register") return <UserAuthPage mode="register" />;
+  if (path === "/onboarding") return <OnboardingPage />;
   if (path === "/app" || path.startsWith("/app")) {
     return <UserGate><UserApp /></UserGate>;
   }

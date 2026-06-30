@@ -436,6 +436,7 @@ export function UserApp() {
 
   const remaining = user?.remaining ?? 0;
   const exhausted = user !== null && remaining === 0;
+  const lowQuota = !exhausted && remaining > 0 && remaining <= 3;
 
   return (
     <div className="h-dvh flex bg-gray-50">
@@ -546,6 +547,13 @@ export function UserApp() {
             <div className="max-w-3xl mx-auto text-center space-y-2">
               <p className="text-sm text-gray-400">使用次数已用完</p>
               <p className="text-xs text-gray-300">如需继续使用，请联系管理员增加额度</p>
+            </div>
+          </div>
+        )}
+        {lowQuota && (
+          <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 shrink-0">
+            <div className="max-w-3xl mx-auto text-xs text-amber-700 text-center">
+              额度即将用完（剩余 {remaining} 次），用完后请联系管理员增加
             </div>
           </div>
         )}

@@ -54,11 +54,13 @@ export function UserAuthPage({ mode: initialMode }: Props) {
           return;
         }
         await register(email.trim(), password, inviteCode.trim() || undefined, displayName.trim() || undefined);
+        // 注册成功 → 新手引导页（首次使用）
+        window.location.href = "/onboarding";
       } else {
         await accountLogin(email.trim(), password);
+        // 登录成功 → 直接进 app（老用户不需引导）
+        window.location.href = "/app";
       }
-      // 成功 → 跳转 /app
-      window.location.href = "/app";
     } catch (err) {
       setError((err as Error).message || "操作失败");
     } finally {

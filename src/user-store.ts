@@ -141,6 +141,17 @@ export function setUserQuota(id: string, newLimit: number): User | null {
   return u;
 }
 
+/** 重置用户密码（admin）。passwordHash 已是哈希值。 */
+export function setUserPassword(id: string, passwordHash: string): User | null {
+  const store = readStore();
+  const u = store.users.find((x) => x.id === id);
+  if (!u) return null;
+  u.password_hash = passwordHash;
+  writeStore(store);
+  log.info({ userId: id }, "admin 重置用户密码");
+  return u;
+}
+
 /** 原子地 +1 使用次数并返回更新后的 user */
 export function incrementUserUsage(id: string): User | null {
   const store = readStore();
