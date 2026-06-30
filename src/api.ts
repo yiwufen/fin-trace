@@ -54,6 +54,8 @@ import {
   getAllTokenSessions,
   clearTokenSessions,
 } from "./share-store.js";
+import { listUsers, disableUser, setUserQuota, deleteUser } from "./user-store.js";
+import { handleAccount } from "./account-handler.js";
 import { handleUserMessage } from "./chat/loop.js";
 import type { ChatMessage } from "./chat/types.js";
 import { readSettings, writeSettings } from "./settings-store.js";
@@ -133,6 +135,11 @@ function broadcastSSE(sessionId: string, eventType: string, data: unknown): void
 
 const runningExplorations = new Map<string, { explorationId: string; abortController: AbortController }>();
 
+/** 查询某会话是否有探索/聊天正在运行（供 account-handler status 端点用） */
+export function isExplorationRunning(sessionId: string): boolean {
+  return runningExplorations.has(sessionId);
+}
+
 // ─── SSE 事件缓冲 — 新连接建立时重放未消费的事件 ───
 // 缓冲所有事件类型（含 text_delta），以便断线重连后完整恢复流式输出。
 // text_delta 量大，按累计字节上限控制：超过 TEXT_BYTE_BUDGET 时丢弃最早的 text_delta。
@@ -199,7 +206,7 @@ function clearAuthCookie(res: ServerResponse): void {
 
 // ─── JSON 解析辅助 ───
 
-async function readBody(req: IncomingMessage): Promise<string> {
+export async function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -208,7 +215,7 @@ async function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function sendJSON(res: ServerResponse, status: number, data: unknown): void {
+export function sendJSON(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -219,7 +226,7 @@ function sendJSON(res: ServerResponse, status: number, data: unknown): void {
 
 // ─── CORS ───
 
-const CORS_HEADERS = {
+export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Token",
@@ -279,6 +286,12 @@ export async function handleApiRequest(
     return true;
   }
 
+  // ─── 账号体系（用户注册/登录/会话，独立于 admin 鉴权）───
+  if (url.startsWith("/api/account/")) {
+    await handleAccount(req, res);
+    return true;
+  }
+
   // ─── admin 门禁：配置了 admin_token 后，管理端需认证 ───
   // 影响 /api/sessions*、/api/settings*、/api/share-tokens*
   // 认证来源优先级：httpOnly Cookie > X-Admin-Token header
@@ -294,6 +307,12 @@ export async function handleApiRequest(
   // ─── /api/share-tokens — 分享令牌管理（admin）───
   if (url.startsWith("/api/share-tokens")) {
     await handleShareTokens(req, res);
+    return true;
+  }
+
+  // ─── /api/admin/users — 用户管理（admin）───
+  if (url.startsWith("/api/admin/users")) {
+    await handleAdminUsers(req, res);
     return true;
   }
 
@@ -754,6 +773,16 @@ async function handlePutSettings(req: IncomingMessage, res: ServerResponse): Pro
     } else if (typeof web.demo_session_id === "string" && web.demo_session_id.trim().length > 0) {
       merged.demo_session_id = web.demo_session_id.trim();
     }
+    // 账号体系配置
+    if (Array.isArray(web.invite_codes)) {
+      merged.invite_codes = web.invite_codes.filter((c: unknown): c is string => typeof c === "string" && c.length > 0);
+    }
+    if (typeof web.user_signup_quota === "number") {
+      merged.user_signup_quota = Math.max(0, Math.floor(web.user_signup_quota));
+    }
+    if (typeof web.user_registration_enabled === "boolean") {
+      merged.user_registration_enabled = web.user_registration_enabled;
+    }
     current.web = merged;
   }
 
@@ -905,7 +934,7 @@ async function handleValidate(_req: IncomingMessage, res: ServerResponse): Promi
 
 // ─── 聊天 ───
 
-async function handleChat(
+export async function handleChat(
   sessionId: string,
   req: IncomingMessage,
   res: ServerResponse,
@@ -938,7 +967,8 @@ async function handleChat(
   const chatSessionId = sessionId;
 
   // 首次聊天时自动更新会话标题（匹配默认标题模式）
-  const isDefaultTitle = session.title === "新会话" || /^访客-/.test(session.title);
+  // 兼容：管理端"新会话"、访客"访客-xxx"、用户"会话"
+  const isDefaultTitle = session.title === "新会话" || session.title === "会话" || /^访客-/.test(session.title);
 
   runningExplorations.set(sessionId, {
     explorationId: `chat_${Date.now()}`,
@@ -1303,9 +1333,78 @@ async function handleShareTokens(
   sendJSON(res, 404, { error: "Not found" });
 }
 
+// ─── 用户管理（admin）───
+
+async function handleAdminUsers(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const url = req.url ?? "/";
+  const path = url.split("?")[0];
+
+  // GET /api/admin/users — 用户列表
+  if (path === "/api/admin/users" && req.method === "GET") {
+    const users = listUsers().map((u) => ({
+      id: u.id,
+      email: u.email,
+      display_name: u.display_name,
+      usage_limit: u.usage_limit,
+      usage_count: u.usage_count,
+      disabled: u.disabled,
+      created_at: u.created_at,
+    }));
+    res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+    res.end(JSON.stringify(users));
+    return;
+  }
+
+  // /api/admin/users/:id — 禁用/启用/调额度/删除
+  const userMatch = path.match(/^\/api\/admin\/users\/([^/]+)$/);
+  if (userMatch) {
+    const userId = userMatch[1];
+    if (req.method === "PATCH") {
+      const body = await readBody(req);
+      const { disabled, usage_limit } = JSON.parse(body || "{}");
+      let updated = null;
+      if (typeof disabled === "boolean") {
+        updated = disableUser(userId, disabled);
+      }
+      if (typeof usage_limit === "number") {
+        updated = setUserQuota(userId, usage_limit);
+      }
+      if (!updated) {
+        sendJSON(res, 404, { error: "用户不存在" });
+        return;
+      }
+      res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        id: updated.id,
+        email: updated.email,
+        display_name: updated.display_name,
+        usage_limit: updated.usage_limit,
+        usage_count: updated.usage_count,
+        disabled: updated.disabled,
+        created_at: updated.created_at,
+      }));
+      return;
+    }
+    if (req.method === "DELETE") {
+      const result = await deleteUser(userId);
+      if (!result.deleted) {
+        sendJSON(res, 404, { error: "用户不存在" });
+        return;
+      }
+      sendJSON(res, 200, { deleted: true, sessions_cleaned: result.sessions_cleaned });
+      return;
+    }
+  }
+
+  sendJSON(res, 404, { error: "Not found" });
+}
+
 // ─── SSE 端点 ───
 
-function handleSSE(
+export function handleSSE(
   sessionId: string,
   _req: IncomingMessage,
   res: ServerResponse,

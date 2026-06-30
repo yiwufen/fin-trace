@@ -164,6 +164,9 @@ export interface SettingsUpdate {
   web?: {
     demo_session_id?: string | null;
     admin_token?: string;
+    invite_codes?: string[];
+    user_signup_quota?: number;
+    user_registration_enabled?: boolean;
   };
 }
 
@@ -466,6 +469,148 @@ export async function getPublicSessionStatus(token: string, sessionId: string): 
 /** 访客删除指定会话 */
 export async function deletePublicSession(token: string, sessionId: string): Promise<{ ok: boolean }> {
   return publicRequest(`/token/${token}/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+// ─── 账号体系 API（用户注册/登录/会话）───
+
+/** 账号请求 — 同源自动携带 fin-trace-user cookie */
+async function accountRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`/api/account${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export interface AccountUser {
+  id: string;
+  email: string;
+  display_name: string;
+  usage_limit: number;
+  usage_count: number;
+  remaining: number;
+  created_at: string;
+}
+
+export interface AccountConfig {
+  registration_enabled: boolean;
+  invite_code_required: boolean;
+}
+
+export interface UserSessionSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+/** 注册页前置信息 */
+export async function getAccountConfig(): Promise<AccountConfig> {
+  return accountRequest<AccountConfig>("/config");
+}
+
+/** 注册 */
+export async function register(email: string, password: string, inviteCode?: string, displayName?: string): Promise<{ user: AccountUser }> {
+  return accountRequest<{ user: AccountUser }>("/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password, invite_code: inviteCode, display_name: displayName }),
+  });
+}
+
+/** 登录 */
+export async function accountLogin(email: string, password: string): Promise<{ user: AccountUser }> {
+  return accountRequest<{ user: AccountUser }>("/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+/** 登出 */
+export async function accountLogout(): Promise<void> {
+  await accountRequest("/logout", { method: "POST" }).catch(() => {});
+}
+
+/** 查询当前登录用户（未登录返回 null，不抛异常） */
+export async function getMe(): Promise<{ user: AccountUser; sessions: UserSessionSummary[] } | null> {
+  try {
+    return await accountRequest<{ user: AccountUser; sessions: UserSessionSummary[] }>("/me");
+  } catch {
+    return null;
+  }
+}
+
+/** 列出用户会话 */
+export async function listUserSessions(): Promise<UserSessionSummary[]> {
+  return accountRequest<UserSessionSummary[]>("/sessions");
+}
+
+/** 创建用户会话 */
+export async function createUserSession(title?: string): Promise<{ id: string; title: string; created_at: string }> {
+  return accountRequest("/sessions", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+/** 获取会话消息 + 处理状态 */
+export async function getUserSessionMessages(sessionId: string): Promise<{ messages: ChatMessage[]; processing: boolean }> {
+  return accountRequest(`/sessions/${sessionId}/messages`);
+}
+
+/** 删除用户会话 */
+export async function deleteUserSessionApi(sessionId: string): Promise<{ ok: boolean }> {
+  return accountRequest(`/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+/** 查询会话是否仍在处理（断线恢复用） */
+export async function getUserSessionStatus(sessionId: string): Promise<{ running: boolean }> {
+  try {
+    return await accountRequest<{ running: boolean }>(`/sessions/${sessionId}/status`);
+  } catch {
+    return { running: false };
+  }
+}
+
+/** 用户发送消息 */
+export async function sendUserChat(sessionId: string, message: string): Promise<{ status: string }> {
+  return accountRequest(`/sessions/${sessionId}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** 用户 SSE 连接（复用现有 SSE 事件协议） */
+export function createUserSSEConnection(sessionId: string, handlers: ChatSSEHandlers): EventSource {
+  const es = new EventSource(`/api/account/sessions/${sessionId}/stream`);
+
+  es.addEventListener("text_delta", (e) => {
+    const data = JSON.parse(e.data);
+    handlers.onTextDelta(data.text ?? "");
+  });
+  es.addEventListener("tool_start", (e) => handlers.onToolStart(JSON.parse(e.data)));
+  es.addEventListener("tool_result", (e) => handlers.onToolResult(JSON.parse(e.data)));
+  es.addEventListener("step", (e) => handlers.onStep(JSON.parse(e.data)));
+  es.addEventListener("finalize", (e) => handlers.onFinalize(JSON.parse(e.data)));
+  es.addEventListener("message_complete", () => handlers.onMessageComplete());
+  es.addEventListener("error", (e) => {
+    if (es.readyState === EventSource.CLOSED) {
+      handlers.onConnectionLost?.();
+      return;
+    }
+    try {
+      const data = e instanceof MessageEvent ? JSON.parse(e.data) : null;
+      if (data?.error) handlers.onError(data.error);
+    } catch {
+      // 连接层面错误 — EventSource 可能正在重连
+    }
+  });
+  return es;
 }
 
 // 重新导出常用类型供组件使用

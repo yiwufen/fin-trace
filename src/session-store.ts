@@ -19,6 +19,8 @@ export interface Session {
   updated_at: string;
   explorations: Exploration[];
   messages: ChatMessage[];
+  /** 归属用户 ID（用户会话有值；旧数据/管理端会话无此字段） */
+  owner_id?: string;
 }
 
 export interface Exploration {
@@ -61,7 +63,7 @@ async function ensureDir(): Promise<void> {
 
 // ─── CRUD ───
 
-export async function createSession(title?: string): Promise<Session> {
+export async function createSession(title?: string, ownerId?: string): Promise<Session> {
   await ensureDir();
   const session: Session = {
     id: randomUUID(),
@@ -71,6 +73,7 @@ export async function createSession(title?: string): Promise<Session> {
     explorations: [],
     messages: [],
   };
+  if (ownerId) session.owner_id = ownerId;
   await writeFile(sessionPath(session.id), JSON.stringify(session, null, 2), "utf-8");
   return session;
 }
@@ -86,15 +89,21 @@ export async function getSession(id: string): Promise<Session | null> {
   }
 }
 
-interface SessionSummary {
+export interface SessionSummary {
   id: string;
   title: string;
   created_at: string;
   updated_at: string;
   explorations: Exploration[];
+  owner_id?: string;
 }
 
-export async function listSessions(): Promise<SessionSummary[]> {
+/**
+ * 列出会话摘要。
+ * @param ownerId 可选，按归属过滤。传 undefined 返回全部（管理端用）。
+ *                旧数据无 owner_id 字段，ownerId 过滤时会被排除（视为无主）。
+ */
+export async function listSessions(ownerId?: string): Promise<SessionSummary[]> {
   await ensureDir();
   const files = await readdir(DATA_DIR);
   const sessions: SessionSummary[] = [];
@@ -104,12 +113,15 @@ export async function listSessions(): Promise<SessionSummary[]> {
     try {
       const raw = await readFile(join(DATA_DIR, file), "utf-8");
       const s = JSON.parse(raw) as Session;
+      // 按归属过滤
+      if (ownerId !== undefined && s.owner_id !== ownerId) continue;
       sessions.push({
         id: s.id,
         title: s.title,
         created_at: s.created_at,
         updated_at: s.updated_at,
         explorations: s.explorations,
+        owner_id: s.owner_id,
       });
     } catch {
       // 跳过损坏文件
