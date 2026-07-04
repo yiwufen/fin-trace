@@ -20,6 +20,7 @@ import { UserGate } from "./components/UserGate";
 import { UserApp } from "./components/UserApp";
 import { UserManageModal } from "./components/UserManageModal";
 import { OnboardingPage } from "./components/OnboardingPage";
+import { Landing } from "./components/Landing";
 
 const MAX_CACHED_SESSIONS = 10;
 
@@ -47,24 +48,28 @@ function createSessionData(): SessionData {
   };
 }
 
-// ─── / 路径重定向：根据用户登录态分流 ───
-// 未登录 → /login；已登录 → /app。
-// 让 / 成为用户主入口，admin 移到 /admin，PWA 安装行为天然正确。
+// ─── / 路径分流：已登录 → /app；未登录 → 渲染 Landing 落地页 ───
+// 过去未登录会被直接跳到 /login，访客还没看到产品价值就撞上表单。
+// 现在改为展示 Landing：先传递价值，CTA 引导用户主动去登录/注册。
+// admin 移到 /admin，PWA 安装的 start_url=/ 仍天然正确。
 function RootRedirect() {
+  const [resolved, setResolved] = useState(false);
   useEffect(() => {
     getMe()
       .then((me) => {
-        window.location.replace(me ? "/app" : "/login");
+        if (me) window.location.replace("/app");
+        else setResolved(true); // 未登录 → 渲染 Landing
       })
-      .catch(() => {
-        window.location.replace("/login");
-      });
+      .catch(() => setResolved(true)); // 查询失败也展示 Landing，至少有内容
   }, []);
-  return (
-    <div className="h-dvh flex items-center justify-center text-gray-400 text-sm">
-      加载中...
-    </div>
-  );
+  if (!resolved) {
+    return (
+      <div className="h-dvh flex items-center justify-center text-gray-400 text-sm">
+        加载中...
+      </div>
+    );
+  }
+  return <Landing />;
 }
 
 // ─── App ───
@@ -556,9 +561,8 @@ export default function App() {
     return <UserGate><UserApp /></UserGate>;
   }
 
-  // 路由：/ → 用户主入口（PWA 安装的天然起点）
-  // 未登录 → 跳 /login；已登录 → 跳 /app。
-  // 这让 / 的 manifest（start_url=/）安装后直接进用户流程，而非 admin。
+  // 路由：/ → 未登录展示 Landing 落地页；已登录在 RootRedirect 内 replace 到 /app。
+  // 这让 / 的 manifest（start_url=/）安装后：未登录先了解产品，已登录直接进工作台。
   if (path === "/") {
     return <RootRedirect />;
   }
