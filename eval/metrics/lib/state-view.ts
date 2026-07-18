@@ -54,7 +54,7 @@ export function buildStateView(input: StateViewInput): StateView {
   const agent_threads: AgentThreadView[] = threads.map((t: EventThread) => ({
     id: t.id,
     title: t.title,
-    thread_event_ku_ids: (t.thread_events ?? []).map((e) => e.ku_id),
+    thread_event_ku_ids: (t.thread_events ?? []).map((e) => e.ku_id).filter((k): k is string => typeof k === "string"),
     relationships: (t.relationships ?? []).map((r) => ({
       from_idx: r.from_idx,
       to_idx: r.to_idx,
