@@ -69,6 +69,30 @@ switch (subcommand) {
     console.log(`[efficiency] ${sid}: useful=${report.useful_events_count} total=${report.total_events_count}`);
     break;
   }
+  case "structural": {
+    // 用法: npx tsx eval/cli.ts structural <run-id> <scenario-id>
+    // 隐藏命令：读已有 run 的 raw-output/state，算 structural quality，写 metrics/quality-structural.json
+    const { computeStructuralQuality } = await import("./metrics/quality-structural.js");
+    const { buildStateView } = await import("./metrics/lib/state-view.js");
+    const { readFileSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const rid = positionals[1];
+    const sid = positionals[2];
+    if (!rid || !sid) {
+      console.error("用法: npx tsx eval/cli.ts structural <run-id> <scenario-id>");
+      process.exit(1);
+    }
+    const base = resolve("eval/runs", rid, sid);
+    const output = JSON.parse(readFileSync(resolve(base, "raw-output.json"), "utf-8"));
+    const stateRaw = JSON.parse(readFileSync(resolve(base, "raw-state.json"), "utf-8"));
+    const view = buildStateView({ output, state: stateRaw });
+    const report = computeStructuralQuality(view);
+    const outDir = resolve(base, "metrics");
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(resolve(outDir, "quality-structural.json"), JSON.stringify(report, null, 2));
+    console.log(`[structural] ${sid}: ku_id_provenance=${report.ku_id_provenance.matched}/${report.ku_id_provenance.total}, causal_depth=${report.thread_causal_depth.causal_temporal}/${report.thread_causal_depth.total}, redundancy=${report.thread_redundancy}`);
+    break;
+  }
   case "judge":
     console.error("[eval] judge 尚未实现（Task 6 会接入）");
     process.exit(1);
