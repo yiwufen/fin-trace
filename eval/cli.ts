@@ -120,9 +120,49 @@ switch (subcommand) {
     console.log(`[recall] ${sid}: must=${report.recall_must.hit}/${report.recall_must.total}, should=${report.recall_should.hit}/${report.recall_should.total}, thread_full=${report.thread_full_rate.full}/${report.thread_full_rate.total}, audit_items=${audit.items.length}`);
     break;
   }
-  case "judge":
-    console.error("[eval] judge 尚未实现（Task 6 会接入）");
-    process.exit(1);
+  case "judge": {
+    const { renderWorksheet, writeWorksheet, parseWorksheet, applyVerdictsToGroundTruth, writeGroundTruth } =
+      await import("./report/worksheet.js");
+    const { loadGroundTruth } = await import("./runner/golden-loader.js");
+    const { latestRunId } = await import("./runner/run.js");
+    const { readFileSync, existsSync: existsSyncSafe } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const sid = scenario;
+    if (!sid) {
+      console.error("用法: npx tsx eval/cli.ts judge <scenario> [--commit]");
+      process.exit(1);
+    }
+    if (values.commit) {
+      // 回填模式：解析 worksheet → 更新 ground truth
+      const fm = parseWorksheet(sid);
+      if (!fm) {
+        console.error(`[judge] 未找到 ${sid} 的 worksheet.md。先跑 npx tsx eval/cli.ts judge <scenario>（不带 --commit）生成。`);
+        process.exit(1);
+      }
+      const gt = loadGroundTruth(sid);
+      const updated = applyVerdictsToGroundTruth(sid, fm.verdicts, gt);
+      const path = writeGroundTruth(sid, updated);
+      console.log(`[judge] 回填 ${sid} 的 aliases 到 ${path}`);
+    } else {
+      // 渲染模式：读最新 run 的 audit-pending → 渲染 worksheet
+      const rid = values["run-id"] ?? latestRunId();
+      if (!rid) {
+        console.error(`[judge] 没有 run 可用。先跑 npx tsx eval/cli.ts run。`);
+        process.exit(1);
+      }
+      const auditPath = resolve("eval/runs", rid, sid, "audit-pending.json");
+      if (!existsSyncSafe(auditPath)) {
+        console.error(`[judge] 未找到 ${auditPath}。先对该 scenario 跑 run + recall。`);
+        process.exit(1);
+      }
+      const audit = JSON.parse(readFileSync(auditPath, "utf-8"));
+      const content = renderWorksheet(audit, rid, sid);
+      const path = writeWorksheet(sid, content);
+      console.log(`[judge] 渲染 ${sid} 的 worksheet 到 ${path}`);
+      console.log(`[judge] 编辑后跑 npx tsx eval/cli.ts judge ${sid} --commit 回填。`);
+    }
+    break;
+  }
   case "report":
     console.error("[eval] report 尚未实现（Task 7 会接入）");
     process.exit(1);
