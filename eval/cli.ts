@@ -45,6 +45,30 @@ switch (subcommand) {
   case "run":
     await runCommand({ scenario, noCache: values["no-cache"] === true });
     break;
+  case "efficiency": {
+    // 用法: npx tsx eval/cli.ts efficiency <run-id> <scenario-id>
+    // 隐藏命令：读已有 run 的 raw-output/state，算 efficiency，写 metrics/efficiency.json
+    const { computeEfficiency } = await import("./metrics/efficiency.js");
+    const { buildStateView } = await import("./metrics/lib/state-view.js");
+    const { readFileSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const rid = positionals[1];
+    const sid = positionals[2];
+    if (!rid || !sid) {
+      console.error("用法: npx tsx eval/cli.ts efficiency <run-id> <scenario-id>");
+      process.exit(1);
+    }
+    const base = resolve("eval/runs", rid, sid);
+    const output = JSON.parse(readFileSync(resolve(base, "raw-output.json"), "utf-8"));
+    const stateRaw = JSON.parse(readFileSync(resolve(base, "raw-state.json"), "utf-8"));
+    const view = buildStateView({ output, state: stateRaw });
+    const report = computeEfficiency(view);
+    const outDir = resolve(base, "metrics");
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(resolve(outDir, "efficiency.json"), JSON.stringify(report, null, 2));
+    console.log(`[efficiency] ${sid}: useful=${report.useful_events_count} total=${report.total_events_count}`);
+    break;
+  }
   case "judge":
     console.error("[eval] judge 尚未实现（Task 6 会接入）");
     process.exit(1);
