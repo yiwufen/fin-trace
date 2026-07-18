@@ -1,0 +1,154 @@
+// 规则匹配：finding 命中判定 + thread 子序列判定 + 关键词 token 化。
+// 完全自实现，不 import src/agent/findings.ts。
+import type { AgentFindingView, AgentThreadView, KnownFinding, KnownThread } from "../../types.js";
+
+// ─── token 化（中文 bigram + 标点切分，不引入分词库）───
+export function tokenize(text: string): string[] {
+  if (!text) return [];
+  // 按标点和空格切成段
+  const segments = text.split(/[\s,，。；;:：!！?？()（）\[\]【】"'`'']/).filter(Boolean);
+  const tokens: string[] = [];
+  for (const seg of segments) {
+    if (/^[A-Za-z0-9]+$/.test(seg)) {
+      // 英文/数字段：整体作为一个 token（小写化）
+      tokens.push(seg.toLowerCase());
+    } else {
+      // 中文段：单字 bigram
+      const chars = [...seg];
+      for (let i = 0; i < chars.length - 1; i++) {
+        tokens.push(chars[i] + chars[i + 1]);
+      }
+      // 单字也保留（长度 1 的段）
+      if (chars.length === 1) tokens.push(chars[0]);
+    }
+  }
+  return tokens;
+}
+
+// ─── 实体 Jaccard ───
+export function entityJaccard(a: string[], b: string[]): number {
+  const setA = new Set(a.map((s) => s.trim()).filter(Boolean));
+  const setB = new Set(b.map((s) => s.trim()).filter(Boolean));
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let inter = 0;
+  for (const x of setA) if (setB.has(x)) inter += 1;
+  const union = setA.size + setB.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+// ─── 关键词重叠率 ───
+export function keywordOverlap(a: string, b: string): number {
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.length === 0 || tb.length === 0) return 0;
+  const setA = new Set(ta);
+  const setB = new Set(tb);
+  let inter = 0;
+  for (const x of setA) if (setB.has(x)) inter += 1;
+  const minLen = Math.min(setA.size, setB.size);
+  return minLen === 0 ? 0 : inter / minLen;
+}
+
+// ─── Finding 命中判定（含 aliases 扩展）───
+export interface FindingMatchResult {
+  matched: boolean;
+  matched_finding_id: string | null;
+  rule_scores: { jaccard: number; keyword_overlap: number; category_match: boolean };
+}
+
+export function matchFinding(
+  gt: KnownFinding,
+  agentFindings: AgentFindingView[],
+): FindingMatchResult {
+  let best: FindingMatchResult = {
+    matched: false,
+    matched_finding_id: null,
+    rule_scores: { jaccard: 0, keyword_overlap: 0, category_match: false },
+  };
+
+  for (const f of agentFindings) {
+    const categoryMatch = f.category === gt.category;
+    const jaccard = entityJaccard(gt.key_entities, f.entities_involved);
+    // keyword overlap：考虑 gt.statement + aliases
+    const gtTexts = [gt.statement, ...(gt.aliases ?? [])];
+    let maxKw = 0;
+    for (const t of gtTexts) {
+      maxKw = Math.max(maxKw, keywordOverlap(t, f.statement));
+    }
+    // 也比对 entities_involved 与 aliases（alias 可能是实体表述）
+    const entityAliasMatch = (gt.aliases ?? []).some((alias) =>
+      f.entities_involved.some((e) => e.includes(alias) || alias.includes(e)),
+    );
+
+    // 命中需同时满足：实体 Jaccard ≥ 0.5 + category 相同 + 关键词重叠 ≥ 0.6 + evidence ≥ min_evidence
+    // aliases 命中可放宽：alias 实体匹配 → 视为 Jaccard 通过
+    const jaccardPass = jaccard >= 0.5 || entityAliasMatch;
+    const kwPass = maxKw >= 0.6;
+    const evidencePass = f.evidence.length >= gt.min_evidence;
+    const matched = categoryMatch && jaccardPass && kwPass && evidencePass;
+
+    const scores = { jaccard, keyword_overlap: maxKw, category_match: categoryMatch };
+
+    // 记录最高分（用于 audit-pending 判定）
+    if (matched && !best.matched) {
+      best = { matched: true, matched_finding_id: f.id, rule_scores: scores };
+    } else if (!best.matched && (scores.jaccard > best.rule_scores.jaccard || scores.keyword_overlap > best.rule_scores.keyword_overlap)) {
+      best = { matched: false, matched_finding_id: f.id, rule_scores: scores };
+    }
+  }
+  return best;
+}
+
+// ─── "近似候选"判定（用于 audit-pending）───
+export function isApproximateCandidate(scores: { jaccard: number; keyword_overlap: number; category_match: boolean }): boolean {
+  // 未达命中阈值但有信号：Jaccard ≥ 0.3，或 category 相同且 keyword_overlap ≥ 0.3
+  return scores.jaccard >= 0.3 || (scores.category_match && scores.keyword_overlap >= 0.3);
+}
+
+// ─── Thread 子序列判定（gt key_events 是 agent thread_events 的子序列）───
+export type ThreadMatchKind = "full" | "partial" | "mismatch";
+
+export function matchThread(gt: KnownThread, agentThread: AgentThreadView): ThreadMatchKind {
+  const gtKuIds = gt.key_events.map((e) => e.ku_id);
+  const agentKuIds = agentThread.thread_event_ku_ids;
+
+  // 判定 gt key_events 是否为 agent 的子序列，并统计覆盖数
+  const coverage = subsequenceCoverage(gtKuIds, agentKuIds);
+
+  // 因果方向：检查 agent 的关系类型分布是否与 gt.causal_direction 一致
+  // forward：主要关系应为 causal/temporal；reverse：视为方向不符
+  // 简化：只要 agent 有 ≥1 个 causal/temporal 关系即视为方向 OK（精确方向对比留待后续）
+  const hasCausal = agentThread.relationships.some(
+    (r) => r.type === "causal" || r.type === "temporal",
+  );
+  const directionOk = gt.causal_direction === "forward" ? hasCausal : true;  // reverse 暂不严格校验
+
+  if (coverage.count === gtKuIds.length && coverage.subsequence && directionOk) {
+    return "full";
+  }
+  if (coverage.count >= Math.ceil((gtKuIds.length * 2) / 3) && directionOk) {
+    return "partial";
+  }
+  return "mismatch";
+}
+
+// 返回 gt 是否为 agent 的子序列，以及匹配到的元素数
+function subsequenceCoverage(gtIds: string[], agentIds: string[]): { subsequence: boolean; count: number } {
+  const agentSet = new Set(agentIds);
+  // 子序列判定：gt 中存在的元素是否按 agent 的顺序出现
+  let agentIdx = 0;
+  let count = 0;
+  let subsequence = true;
+  for (const g of gtIds) {
+    const foundAt = agentIds.indexOf(g, agentIdx);
+    if (foundAt === -1) {
+      // 不在 agent 中，但可能在别处（用于 count）
+      if (agentSet.has(g)) count += 1;
+      subsequence = false;
+    } else {
+      count += 1;
+      agentIdx = foundAt + 1;
+    }
+  }
+  return { subsequence, count };
+}

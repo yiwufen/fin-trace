@@ -93,6 +93,33 @@ switch (subcommand) {
     console.log(`[structural] ${sid}: ku_id_provenance=${report.ku_id_provenance.matched}/${report.ku_id_provenance.total}, causal_depth=${report.thread_causal_depth.causal_temporal}/${report.thread_causal_depth.total}, redundancy=${report.thread_redundancy}`);
     break;
   }
+  case "recall": {
+    // 用法: npx tsx eval/cli.ts recall <run-id> <scenario-id>
+    // 隐藏命令：读已有 run 的 raw-output/state + ground truth，算 recall，写 metrics/quality-recall.json + audit-pending.json
+    const { computeRecall } = await import("./metrics/quality-recall.js");
+    const { buildStateView } = await import("./metrics/lib/state-view.js");
+    const { loadGroundTruth } = await import("./runner/golden-loader.js");
+    const { readFileSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const rid = positionals[1];
+    const sid = positionals[2];
+    if (!rid || !sid) {
+      console.error("用法: npx tsx eval/cli.ts recall <run-id> <scenario-id>");
+      process.exit(1);
+    }
+    const base = resolve("eval/runs", rid, sid);
+    const output = JSON.parse(readFileSync(resolve(base, "raw-output.json"), "utf-8"));
+    const stateRaw = JSON.parse(readFileSync(resolve(base, "raw-state.json"), "utf-8"));
+    const view = buildStateView({ output, state: stateRaw });
+    const gt = loadGroundTruth(sid);
+    const { report, audit } = computeRecall({ view, groundTruth: gt });
+    const outDir = resolve(base, "metrics");
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(resolve(outDir, "quality-recall.json"), JSON.stringify(report, null, 2));
+    writeFileSync(resolve(base, "audit-pending.json"), JSON.stringify(audit, null, 2));
+    console.log(`[recall] ${sid}: must=${report.recall_must.hit}/${report.recall_must.total}, should=${report.recall_should.hit}/${report.recall_should.total}, thread_full=${report.thread_full_rate.full}/${report.thread_full_rate.total}, audit_items=${audit.items.length}`);
+    break;
+  }
   case "judge":
     console.error("[eval] judge 尚未实现（Task 6 会接入）");
     process.exit(1);
