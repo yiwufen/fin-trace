@@ -126,6 +126,36 @@ export async function runScenario(
 
   writeFileSync(outputPath, JSON.stringify(result.output, null, 2));
   writeFileSync(statePath, JSON.stringify(serializeState(result.state), null, 2));
+
+  // 计算并写入所有指标
+  try {
+    const { buildStateView } = await import("../metrics/lib/state-view.js");
+    const { computeEfficiency } = await import("../metrics/efficiency.js");
+    const { computeStructuralQuality } = await import("../metrics/quality-structural.js");
+    const { computeRecall } = await import("../metrics/quality-recall.js");
+    const { loadGroundTruth } = await import("./golden-loader.js");
+    const { mkdirSync: mk, writeFileSync: wf } = await import("node:fs");
+    const { resolve: rsv } = await import("node:path");
+
+    const view = buildStateView({ output: result.output, state: result.state });
+    const metricsDir = rsv(scenarioDir, "metrics");
+    mk(metricsDir, { recursive: true });
+
+    const eff = computeEfficiency(view);
+    wf(rsv(metricsDir, "efficiency.json"), JSON.stringify(eff, null, 2));
+
+    const struct = computeStructuralQuality(view);
+    wf(rsv(metricsDir, "quality-structural.json"), JSON.stringify(struct, null, 2));
+
+    const gt = loadGroundTruth(scenarioId);
+    const { report: recall, audit } = computeRecall({ view, groundTruth: gt });
+    wf(rsv(metricsDir, "quality-recall.json"), JSON.stringify(recall, null, 2));
+    wf(rsv(scenarioDir, "audit-pending.json"), JSON.stringify(audit, null, 2));
+
+    console.log(`[run] ${scenarioId}: 指标写入 ${metricsDir}`);
+  } catch (metricErr) {
+    console.error(`[run] ${scenarioId}: 指标计算失败 — ${(metricErr as Error).message}（raw output 已保存）`);
+  }
 }
 
 export function writeManifest(runId: string, scenarioIds: string[]): RunManifest {
