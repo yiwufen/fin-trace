@@ -126,29 +126,35 @@ export function matchThread(gt: KnownThread, agentThread: AgentThreadView): Thre
   if (coverage.count === gtKuIds.length && coverage.subsequence && directionOk) {
     return "full";
   }
-  if (coverage.count >= Math.ceil((gtKuIds.length * 2) / 3) && directionOk) {
+  // partial 要求 subsequence（顺序不颠倒）——spec §3.3：
+  // "gt key_events 不是 agent thread 的子序列（顺序颠倒）" → mismatch
+  if (coverage.subsequence && coverage.count >= Math.ceil((gtKuIds.length * 2) / 3) && directionOk) {
     return "partial";
   }
   return "mismatch";
 }
 
-// 返回 gt 是否为 agent 的子序列，以及匹配到的元素数
+// 返回（已存在的 gt 元素是否作为 agent 的子序列出现）以及已存在的元素数
+// "subsequence" 的含义：gt 中那些实际出现在 agent 里的元素，它们的相对顺序在 agent 中保持。
+// 缺失元素不算破坏顺序（那是 partial 的覆盖问题，不是顺序问题）。
+// 顺序颠倒（如 gt=[A,B,C] agent=[A,C,B]）才破坏 subsequence。
 function subsequenceCoverage(gtIds: string[], agentIds: string[]): { subsequence: boolean; count: number } {
   const agentSet = new Set(agentIds);
-  // 子序列判定：gt 中存在的元素是否按 agent 的顺序出现
+  // 只保留 gt 中存在于 agent 的元素，保持 gt 原序
+  const present = gtIds.filter((g) => agentSet.has(g));
+  let count = present.length;
+  if (present.length === 0) return { subsequence: false, count: 0 };
+
+  // 判定 present 是否为 agentIds 的子序列（标准贪心算法）
   let agentIdx = 0;
-  let count = 0;
   let subsequence = true;
-  for (const g of gtIds) {
+  for (const g of present) {
     const foundAt = agentIds.indexOf(g, agentIdx);
     if (foundAt === -1) {
-      // 不在 agent 中，但可能在别处（用于 count）
-      if (agentSet.has(g)) count += 1;
       subsequence = false;
-    } else {
-      count += 1;
-      agentIdx = foundAt + 1;
+      break;
     }
+    agentIdx = foundAt + 1;
   }
   return { subsequence, count };
 }
