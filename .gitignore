@@ -13,3 +13,7 @@ e2e-*.log
 probe-*.json
 fin-trace.tar.gz
 deploy-image.sh
+
+# eval runtime artifacts
+eval/runs/
+eval/judgments/

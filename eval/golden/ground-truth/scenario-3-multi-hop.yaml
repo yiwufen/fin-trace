@@ -1,0 +1,10 @@
+scenario: scenario-3-multi-hop
+annotation_meta:
+  annotator: ""
+  annotation_date: ""
+  kg_scope: "3-hop from seed entities（线上 KG，不冻结快照）"
+  notes: "待标注。Task 8 会填入实际 known_findings / known_threads。"
+
+known_findings: []
+known_threads: []
+known_false: []

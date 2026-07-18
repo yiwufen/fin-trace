@@ -1,0 +1,17 @@
+scenarios:
+  - id: scenario-1-supply-chain
+    goal: "追踪美国对华芯片出口管制对英伟达供应链的传导影响"
+    seed_entities: ["英伟达", "台积电"]
+    max_depth: 4
+  - id: scenario-2-competitive-landscape
+    goal: "英伟达在 AI 芯片市场的竞争地位，以及主要竞争对手的动态"
+    seed_entities: ["英伟达"]
+    max_depth: 4
+  - id: scenario-3-multi-hop
+    goal: "英伟达和特斯拉之间通过哪些中间实体产生关联"
+    seed_entities: ["英伟达", "特斯拉"]
+    max_depth: 4
+  - id: scenario-4-geopolitical
+    goal: "中美科技竞争背景下，英伟达面临的政策风险有哪些传导路径"
+    seed_entities: ["英伟达"]
+    max_depth: 4
