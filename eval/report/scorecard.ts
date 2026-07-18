@@ -134,16 +134,25 @@ export function renderScenarioScorecardMd(sc: ScenarioScorecard): string {
   lines.push("|------|----|------|");
   if (sc.recall) {
     const must = sc.recall.recall_must;
-    const mustRatio = must.total === 0 ? 1 : must.hit / must.total;
-    const mustHighlight = must.total > 0 && mustRatio < 1 ? "🔴 高亮（不阻断）" : "✅";
-    lines.push(`| Recall_must | ${must.hit}/${must.total} (${(mustRatio * 100).toFixed(0)}%) | ${mustHighlight} |`);
+    // total=0 表示该 scenario 尚未标注 GT，渲染为 "—" 而非误导性的 "0/0 (100%) ✅"
+    if (must.total === 0) {
+      lines.push(`| Recall_must | 0/0 | — (GT 未标注) |`);
+    } else {
+      const mustRatio = must.hit / must.total;
+      const mustHighlight = mustRatio < 1 ? "🔴 高亮（不阻断）" : "✅";
+      lines.push(`| Recall_must | ${must.hit}/${must.total} (${(mustRatio * 100).toFixed(0)}%) | ${mustHighlight} |`);
+    }
     const should = sc.recall.recall_should;
-    const shouldRatio = should.total === 0 ? 1 : should.hit / should.total;
-    lines.push(`| Recall_should | ${should.hit}/${should.total} (${(shouldRatio * 100).toFixed(0)}%) | ${shouldRatio === 1 ? "✅" : "—"} |`);
+    if (should.total === 0) {
+      lines.push(`| Recall_should | 0/0 | — (GT 未标注) |`);
+    } else {
+      const shouldRatio = should.hit / should.total;
+      lines.push(`| Recall_should | ${should.hit}/${should.total} (${(shouldRatio * 100).toFixed(0)}%) | ${shouldRatio === 1 ? "✅" : "—"} |`);
+    }
     const nice = sc.recall.recall_nice;
     lines.push(`| Recall_nice | ${nice.hit}/${nice.total} | — |`);
     const tf = sc.recall.thread_full_rate;
-    lines.push(`| Thread Full Rate | ${tf.full}/${tf.total} | ${tf.full === tf.total ? "✅" : "—"} |`);
+    lines.push(`| Thread Full Rate | ${tf.full}/${tf.total} | ${tf.total === 0 ? "—" : tf.full === tf.total ? "✅" : "—"} |`);
     const tfp = sc.recall.thread_full_partial_rate;
     lines.push(`| Thread Full+Partial | ${tfp.full_partial}/${tfp.total} | |`);
     lines.push(`| known_false 触发 | ${sc.recall.known_false_triggered} | ${sc.recall.known_false_triggered === 0 ? "✅" : "🔴"} |`);
