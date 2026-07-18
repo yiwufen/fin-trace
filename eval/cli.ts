@@ -23,6 +23,8 @@ import { runCommand } from "./runner/run.js";
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
+    help: { type: "boolean", default: false },
+    h: { type: "boolean", default: false },
     "no-cache": { type: "boolean", default: false },
     commit: { type: "boolean", default: false },
     "run-id": { type: "string" },
@@ -34,7 +36,7 @@ const { positionals, values } = parseArgs({
 const subcommand = positionals[0];
 const scenario = positionals[1];
 
-if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+if (!subcommand || values.help || values.h) {
   printHelp();
   process.exit(0);
 }
