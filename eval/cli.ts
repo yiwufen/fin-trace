@@ -163,9 +163,60 @@ switch (subcommand) {
     }
     break;
   }
-  case "report":
-    console.error("[eval] report 尚未实现（Task 7 会接入）");
-    process.exit(1);
+  case "report": {
+    const { buildScenarioScorecard, writeScenarioScorecard, renderScenarioScorecardMd, renderComparisonSection, compareManifests } =
+      await import("./report/scorecard.js");
+    const { loadScenarios } = await import("./runner/golden-loader.js");
+    const { latestRunId } = await import("./runner/run.js");
+    const { writeFileSync, readFileSync, existsSync, mkdirSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const rid = values["run-id"] ?? latestRunId();
+    const baselineId = values.baseline;
+    if (!rid) {
+      console.error("[report] 没有 run 可用。先跑 npx tsx eval/cli.ts run。");
+      process.exit(1);
+    }
+    const scenariosToReport = scenario ? [scenario] : loadScenarios().map((s) => s.id);
+
+    // 读 manifest
+    const manifestPath = resolve("eval/runs", rid, "manifest.json");
+    if (!existsSync(manifestPath)) {
+      console.error(`[report] 未找到 ${manifestPath}`);
+      process.exit(1);
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+
+    // baseline manifest（如指定）
+    let baselineManifest = null;
+    let baselineWarnings: import("./report/scorecard.js").BaselineWarning[] = [];
+    if (baselineId) {
+      const bp = resolve("eval/runs", baselineId, "manifest.json");
+      if (existsSync(bp)) {
+        baselineManifest = JSON.parse(readFileSync(bp, "utf-8"));
+        baselineWarnings = compareManifests(manifest, baselineManifest);
+      }
+    }
+
+    const allScMd: string[] = [];
+    for (const sid of scenariosToReport) {
+      const sc = buildScenarioScorecard(rid, sid);
+      writeScenarioScorecard(rid, sid, sc);
+      let md = renderScenarioScorecardMd(sc);
+      if (baselineId && baselineManifest) {
+        const baselineSc = buildScenarioScorecard(baselineId, sid);
+        md += "\n" + renderComparisonSection(sc, baselineSc, baselineWarnings);
+      }
+      writeFileSync(resolve("eval/runs", rid, sid, "scorecard.md"), md);
+      console.log(`[report] ${sid}: scorecard 写入 eval/runs/${rid}/${sid}/scorecard.md`);
+      allScMd.push(md);
+    }
+
+    // 汇总
+    const summary = `# Scorecard Summary — run ${rid}\n\n${allScMd.join("\n\n---\n\n")}\n`;
+    writeFileSync(resolve("eval/runs", rid, "scorecard-summary.md"), summary);
+    console.log(`[report] 汇总: eval/runs/${rid}/scorecard-summary.md`);
+    break;
+  }
   default:
     console.error(`[eval] 未知子命令 "${subcommand}"。运行 --help 查看用法。`);
     process.exit(1);
