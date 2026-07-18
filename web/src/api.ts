@@ -32,13 +32,22 @@ export async function logout(): Promise<void> {
 export interface AuthStatus {
   required: boolean;
   authenticated: boolean;
+  /** true 表示请求失败（网络/超时），调用方应展示错误而非放行 */
+  error?: boolean;
 }
 
-/** 查询认证状态（无需鉴权） */
+/** 查询认证状态（无需鉴权）。永不 reject：网络失败时返回 { error: true } */
 export async function checkAuth(): Promise<AuthStatus> {
-  const res = await fetch(`${BASE}/auth/status`);
-  if (!res.ok) return { required: false, authenticated: false };
-  return res.json();
+  try {
+    const res = await fetch(`${BASE}/auth/status`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { required: false, authenticated: false };
+    return await res.json();
+  } catch {
+    // 网络层失败/超时 → 标记 error，由 AdminGate 展示错误态而非误判为本地开发放行
+    return { required: false, authenticated: false, error: true };
+  }
 }
 
 function adminHeaders(): Record<string, string> {
