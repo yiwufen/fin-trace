@@ -138,7 +138,11 @@ function computeTemporalContext(): TemporalContext {
 // ─── 状态初始化 ───
 
 export function initState(input: ExplorationInput): ExplorationState {
-  const total = input.max_tokens ?? 128_000;
+  // 探索 token 预算的优先级：调用方显式传 > config.json 配置 > 128k 硬兜底
+  // 之前是 `input.max_tokens ?? 128_000`，但 3 个调用方（A2A handler、chat loop、
+  // eval runner）都不传 input.max_tokens，导致 config.json 的 llm.max_tokens 对
+  // 探索预算完全无效——只控制单次 LLM 调用上限（loop.ts:1089）。
+  const total = input.max_tokens ?? readConfig().llm.max_tokens ?? 128_000;
   return {
     visited: new Map(),
     frontier: input.seed_entities.map((e) => ({
