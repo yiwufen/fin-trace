@@ -14,6 +14,17 @@ export interface ScenarioScorecard {
   recall: RecallReport | null;
   audit_items_count: number;
   reliability_note: string | null;
+  // 运行概要（spec §7）：从 raw-output.json 的 exploration_meta 提取
+  // 用于让读者理解效率数字的上下文（如 token_budget 截断时 efficiency 天然偏低）
+  run_summary: {
+    steps: number | null;
+    entities_visited: number | null;
+    findings_count: number | null;
+    event_threads_count: number | null;
+    events_buffered: number | null;
+    tokens_used: number | null;
+    completion_reason: string | null;
+  } | null;
   // 失败信息
   error?: string;
 }
@@ -34,7 +45,7 @@ export function buildScenarioScorecard(
     return {
       scenario: scenarioId, run_id: runId, run_status: "failed",
       efficiency: null, structural: null, recall: null, audit_items_count: 0,
-      reliability_note: null, error: err.error,
+      reliability_note: null, run_summary: null, error: err.error,
     };
   }
 
@@ -43,11 +54,36 @@ export function buildScenarioScorecard(
   const recall = readJsonIfExists(resolve(base, "metrics/quality-recall.json")) as RecallReport | null;
   const audit = readJsonIfExists(resolve(base, "audit-pending.json")) as { items: unknown[] } | null;
 
+  // 从 raw-output.json 提取运行概要（spec §7 要求的字段）
+  // raw-output.json 由 runner 写入；failed path 上面已 return，这里它必然存在
+  const rawOutput = readJsonIfExists(resolve(base, "raw-output.json")) as {
+    findings?: unknown[];
+    event_threads?: unknown[];
+    exploration_meta?: {
+      completion_reason?: string;
+      stats?: {
+        steps?: number; entities_visited?: number; findings_count?: number;
+        events_buffered?: number; tokens_used?: number;
+      };
+    };
+  } | null;
+  const stats = rawOutput?.exploration_meta?.stats;
+  const run_summary = rawOutput ? {
+    steps: stats?.steps ?? null,
+    entities_visited: stats?.entities_visited ?? null,
+    findings_count: stats?.findings_count ?? null,
+    event_threads_count: rawOutput.event_threads?.length ?? null,
+    events_buffered: stats?.events_buffered ?? null,
+    tokens_used: stats?.tokens_used ?? null,
+    completion_reason: rawOutput.exploration_meta?.completion_reason ?? null,
+  } : null;
+
   return {
     scenario: scenarioId, run_id: runId, run_status: "ok",
     efficiency, structural, recall,
     audit_items_count: audit?.items?.length ?? 0,
     reliability_note: recall?.reliability_note ?? null,
+    run_summary,
   };
 }
 
@@ -89,6 +125,23 @@ export function renderScenarioScorecardMd(sc: ScenarioScorecard): string {
     lines.push("");
     lines.push("> 该场景 run 失败，所有指标为 null。");
     return lines.join("\n");
+  }
+  // 运行概要（spec §7）：Steps / Visited / Findings / Threads / Events / Tokens / Completion
+  // 这些数字是理解下面效率/质量指标的上下文——尤其 completion_reason，
+  // 用于区分"agent 真低效"与"token_budget 截断导致的低 efficiency"
+  if (sc.run_summary) {
+    const s = sc.run_summary;
+    if (s.steps !== null) lines.push(`| Steps | ${s.steps} |`);
+    if (s.entities_visited !== null) lines.push(`| Visited Entities | ${s.entities_visited} |`);
+    if (s.findings_count !== null) lines.push(`| Findings | ${s.findings_count} |`);
+    if (s.event_threads_count !== null) lines.push(`| Event Threads | ${s.event_threads_count} |`);
+    if (s.events_buffered !== null) lines.push(`| Events Buffered | ${s.events_buffered} |`);
+    if (s.tokens_used !== null) lines.push(`| Tokens Used | ${s.tokens_used.toLocaleString()} |`);
+    if (s.completion_reason) {
+      // completion_reason 不是 sufficient 时，hint 读者：低 efficiency 可能是预算截断造成
+      const hint = s.completion_reason === "token_budget" ? " ⚠️ 预算耗尽，efficiency 偏低有部分是截断造成" : "";
+      lines.push(`| Completion | ${s.completion_reason}${hint} |`);
+    }
   }
   if (sc.reliability_note) {
     lines.push(`| Reliability Note | ${sc.reliability_note} |`);
