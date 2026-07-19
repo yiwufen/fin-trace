@@ -1,0 +1,79 @@
+# 标注文件 —— 由 judge --commit 自动回填 aliases。手工编辑请保留 schema。
+scenario: scenario-1-supply-chain
+annotation_meta:
+  annotator: draft-by-subagent
+  annotation_date: '2026-07-18'
+  kg_scope: 3-hop from seed entities（线上 KG，不冻结快照）
+  notes: >-
+    草稿 GT，待人工 review。基于 run 20260718-120543-a7bb770 的 raw_event_archive 独立标注（非 agent 输出副本）。key_entities 选择刻意贴近 agent
+    finding 自然会出现的实体，以保证 Jaccard 匹配口径成立。
+known_findings:
+  - id: gt_f_1
+    statement: 在 2026 年 5-7 月的时间范围内，KG 中未发现美国直接针对英伟达或台积电施加新的芯片出口管制或限制性措施；同期出现的制裁事件（俄乌、伊油、以巴）均与英伟达供应链无直接关联。
+    category: absence
+    importance: must_find
+    key_entities:
+      - 英伟达
+      - 台积电
+      - 美国商务部
+    min_evidence: 2
+    aliases: []
+  - id: gt_f_2
+    statement: 美国商务部及现任政府通过呼吁、关税威胁等手段，持续向台积电、三星电子、SK海力士施压，要求扩大在美产能，体现美国对半导体供应链本土化的干预意图。
+    category: pattern_violation
+    importance: must_find
+    key_entities:
+      - 美国商务部
+      - 台积电
+      - 三星电子
+      - SK海力士
+    min_evidence: 3
+    aliases: []
+  - id: gt_f_3
+    statement: 美国商务部宣称已为台积电争取到额外 1000 亿美元（累计 2650 亿美元、12 座设施）在美投资，但台积电同日表示对新投资暂无确切时间表，政策宣布与企业实际规划之间存在矛盾，为英伟达先进制程供应的确定性埋下风险。
+    category: pattern_violation
+    importance: should_find
+    key_entities:
+      - 美国商务部
+      - 台积电
+    min_evidence: 2
+    aliases: []
+  - id: gt_f_4
+    statement: 中国商务部公开谴责美方以国家安全为由滥用出口管制，指出其严重损害中国企业权益、冲击全球半导体产业链供应链稳定；这是 KG 中可见的中方对出口管制议题的直接回应。
+    category: chain
+    importance: should_find
+    key_entities:
+      - 商务部
+      - 美国商务部
+    min_evidence: 1
+    aliases:
+      - 中国商务部
+  - id: gt_f_5
+    statement: >-
+      英伟达 CEO 黄仁勋 5 月底亲自拜访台积电创始人张忠谋，叠加英伟达与台积电 3 纳米 RTX SPARK 芯片量产合作及 AI
+      进晶圆厂等事件，体现出英伟达-台积电在先进制程上的紧密绑定——这使得任何对台积电产能分配的政策干预都会直接传导到英伟达。
+    category: chain
+    importance: nice_to_find
+    key_entities:
+      - 英伟达
+      - 台积电
+      - 黄仁勋
+    min_evidence: 2
+    aliases: []
+known_threads:
+  - id: gt_t_1
+    description: 7 月 10-16 日美国对韩企/台积电的产能施压链条：卢特尼克呼吁三星/SK 扩产 → 关税威胁点名韩企 → 宣称为台积电争取到 1000 亿投资 → 台积电表态无确切时间表。
+    key_events:
+      - ku_id: ku_19d9b0ff6742c9e9
+      - ku_id: ku_4d6df57ea5496861
+      - ku_id: ku_11f916679ba937d7
+      - ku_id: ku_83a816631f458459
+    causal_direction: forward
+    aliases: []
+known_false:
+  - id: fp_1
+    pattern: 英伟达.*获得.*(出口许可|出口许可|解禁|豁免)
+    why: 在出口管制议题下，KG 中没有任何英伟达获得美方出口许可/解禁/豁免的事件。声称此点是严重幻觉。
+  - id: fp_2
+    pattern: (英伟达|台积电).*(被制裁|被列入实体清单|被加征关税)
+    why: 2026 年 5-7 月 KG 中没有英伟达或台积电被美国直接制裁/列入实体清单/加征关税的事件。声称此点是把对韩企施压错误外推到英伟达。
