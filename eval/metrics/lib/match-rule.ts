@@ -67,16 +67,31 @@ export function matchFinding(
   };
 
   for (const f of agentFindings) {
+    // 优先：alias 可能是人工裁决回填的 finding_id（Task 6 的 applyVerdictsToGroundTruth 写入）
+    // 这种情况下人工已认定语义等价，直接算命中（仍校验 min_evidence）
+    const aliasFindingIdMatch = (gt.aliases ?? []).includes(f.id);
+    if (aliasFindingIdMatch) {
+      const evidencePass = f.evidence.length >= gt.min_evidence;
+      if (evidencePass) {
+        return {
+          matched: true,
+          matched_finding_id: f.id,
+          rule_scores: { jaccard: 1, keyword_overlap: 1, category_match: true },
+        };
+      }
+    }
+
     const categoryMatch = f.category === gt.category;
     const jaccard = entityJaccard(gt.key_entities, f.entities_involved);
-    // keyword overlap：考虑 gt.statement + aliases
-    const gtTexts = [gt.statement, ...(gt.aliases ?? [])];
+    // keyword overlap：考虑 gt.statement + aliases（这里 aliases 是自然语言等价表述，非 finding_id）
+    const gtTexts = [gt.statement, ...(gt.aliases ?? []).filter((a) => !a.startsWith("finding_"))];
     let maxKw = 0;
     for (const t of gtTexts) {
       maxKw = Math.max(maxKw, keywordOverlap(t, f.statement));
     }
     // 也比对 entities_involved 与 aliases（alias 可能是实体表述）
     const entityAliasMatch = (gt.aliases ?? []).some((alias) =>
+      !alias.startsWith("finding_") &&
       f.entities_involved.some((e) => e.includes(alias) || alias.includes(e)),
     );
 

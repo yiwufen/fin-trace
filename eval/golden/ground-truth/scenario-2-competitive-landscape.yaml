@@ -1,77 +1,84 @@
+# 标注文件 —— 由 judge --commit 自动回填 aliases。手工编辑请保留 schema。
 scenario: scenario-2-competitive-landscape
 annotation_meta:
-  annotator: "draft-by-subagent"
-  annotation_date: "2026-07-18"
-  kg_scope: "3-hop from seed entities（线上 KG，不冻结快照）"
-  notes: "草稿 GT，待人工 review。基于 run 20260718-120543-a7bb770 的 raw_event_archive 独立标注。注意 scenario-2 的核心区分点：竞争集合 (must) vs 高通大单突破 (should) vs 板块整体抛售 (nice)。"
-
+  annotator: draft-by-subagent
+  annotation_date: '2026-07-18'
+  kg_scope: 3-hop from seed entities（线上 KG，不冻结快照）
+  notes: >-
+    草稿 GT，待人工 review。基于 run 20260718-120543-a7bb770 的 raw_event_archive 独立标注。注意 scenario-2 的核心区分点：竞争集合 (must) vs 高通大单突破
+    (should) vs 板块整体抛售 (nice)。
 known_findings:
-  # ── must_find (2) ──
   - id: gt_f_1
-    statement: "英伟达在 AI 芯片市场的主要竞争对手包括 AMD、英特尔、高通。"
+    statement: 英伟达在 AI 芯片市场的主要竞争对手包括 AMD、英特尔、高通。
     category: chain
     importance: must_find
-    key_entities: ["英伟达", "AMD", "英特尔", "高通"]
+    key_entities:
+      - 英伟达
+      - AMD
+      - 英特尔
+      - 高通
     min_evidence: 3
     aliases: []
-
   - id: gt_f_2
-    statement: "高通披露微软、Meta 将采用其全新 AI 芯片方案，并为另外两家未具名超大型云厂商开发定制化芯片，直接切入英伟达主导的 AI 训练/推理芯片市场；微软同步确认将在 Azure 数据中心部署高通高带宽计算芯片。"
+    statement: 高通披露微软、Meta 将采用其全新 AI 芯片方案，并为另外两家未具名超大型云厂商开发定制化芯片，直接切入英伟达主导的 AI 训练/推理芯片市场；微软同步确认将在 Azure 数据中心部署高通高带宽计算芯片。
     category: concentration
     importance: must_find
-    key_entities: ["高通", "微软", "Meta"]
+    key_entities:
+      - 高通
+      - 微软
+      - Meta
     min_evidence: 2
     aliases: []
-
-  # ── should_find (2) ──
   - id: gt_f_3
-    statement: "英特尔 CEO 陈立武主导战略转型：投资重心从先进制程代工转向 EMIB 先进封装、玻璃基板及氮化镓/碳化硅等新材料领域，并于 7 月与谷歌云深化 Gemini 生成式 AI 合作，构建差异化竞争路径。"
+    statement: 英特尔 CEO 陈立武主导战略转型：投资重心从先进制程代工转向 EMIB 先进封装、玻璃基板及氮化镓/碳化硅等新材料领域，并于 7 月与谷歌云深化 Gemini 生成式 AI 合作，构建差异化竞争路径。
     category: chain
     importance: should_find
-    key_entities: ["英特尔", "谷歌云"]
+    key_entities:
+      - 英特尔
+      - 谷歌云
     min_evidence: 2
     aliases: []
-
   - id: gt_f_4
-    statement: "英伟达股价 7 月持续下跌，CEO 黄仁勋于 7 月 13 日亲自路演护盘以反击利空传闻，但随后跌幅进一步扩大——表明管理层干预未能扭转市场对估值/周期的担忧。"
+    statement: 英伟达股价 7 月持续下跌，CEO 黄仁勋于 7 月 13 日亲自路演护盘以反击利空传闻，但随后跌幅进一步扩大——表明管理层干预未能扭转市场对估值/周期的担忧。
     category: pattern_violation
     importance: should_find
-    key_entities: ["英伟达", "黄仁勋"]
+    key_entities:
+      - 英伟达
+      - 黄仁勋
     min_evidence: 3
     aliases: []
-
-  # ── nice_to_find (1) ──
   - id: gt_f_5
-    statement: "近期半导体板块整体承压，英伟达、AMD、英特尔、高通、台积电、阿斯麦、ARM 等同步下跌，多家投行（富国、美银、法巴 Exane）上调 AMD 目标价，反映市场对行业周期与估值的高位担忧。"
+    statement: 近期半导体板块整体承压，英伟达、AMD、英特尔、高通、台积电、阿斯麦、ARM 等同步下跌，多家投行（富国、美银、法巴 Exane）上调 AMD 目标价，反映市场对行业周期与估值的高位担忧。
     category: pattern_violation
     importance: nice_to_find
-    key_entities: ["英伟达", "AMD", "英特尔", "高通"]
+    key_entities:
+      - 英伟达
+      - AMD
+      - 英特尔
+      - 高通
     min_evidence: 2
     aliases: []
-
 known_threads:
   - id: gt_t_1
-    description: "6/24 高通 AI 芯片方案披露 → 微软 Azure 确认部署 → 高通夜盘大涨链条，体现竞争对手的实质性突破对英伟达份额的直接威胁。"
+    description: 6/24 高通 AI 芯片方案披露 → 微软 Azure 确认部署 → 高通夜盘大涨链条，体现竞争对手的实质性突破对英伟达份额的直接威胁。
     key_events:
-      - ku_id: "ku_2f3b73fcf07d8206"   # 6/24 高通披露 MS/Meta 采用 + 2 家云厂商定制
-      - ku_id: "ku_20260624_0004"      # 6/24 微软 Azure 部署高通 HBC 芯片
-      - ku_id: "ku_acec6e8b4b4e9953"   # 6/24 高通夜盘涨超 5%
+      - ku_id: ku_2f3b73fcf07d8206
+      - ku_id: ku_20260624_0004
+      - ku_id: ku_acec6e8b4b4e9953
     causal_direction: forward
     aliases: []
-
   - id: gt_t_2
-    description: "7 月英伟达护盘链条：股价盘前下跌 → 黄仁勋 7/13 亲自路演反击利空 → 7/16 跌幅进一步扩大，反映护盘失效。"
+    description: 7 月英伟达护盘链条：股价盘前下跌 → 黄仁勋 7/13 亲自路演反击利空 → 7/16 跌幅进一步扩大，反映护盘失效。
     key_events:
-      - ku_id: "ku_51c17747af3a94c9"            # 7/7 英伟达盘前跌超 2%
-      - ku_id: "ku_em_202607133803435836_002"   # 7/13 黄仁勋亲自护盘
-      - ku_id: "ku_eb3a1dcecc4c7afd"            # 7/16 跌幅扩大至 3%
+      - ku_id: ku_51c17747af3a94c9
+      - ku_id: ku_em_202607133803435836_002
+      - ku_id: ku_eb3a1dcecc4c7afd
     causal_direction: forward
     aliases: []
-
 known_false:
   - id: fp_1
-    pattern: "(高通|AMD|英特尔).*(收购|并购|控股)英伟达"
-    why: "KG 中没有任何竞争对手收购/并购英伟达的事件。声称此点属于严重幻觉。"
+    pattern: (高通|AMD|英特尔).*(收购|并购|控股)英伟达
+    why: KG 中没有任何竞争对手收购/并购英伟达的事件。声称此点属于严重幻觉。
   - id: fp_2
-    pattern: "英伟达.*失去.*(微软|Meta|谷歌).*(订单|客户|合同)"
-    why: "KG 中没有英伟达被任一大客户取消订单/失去客户的事件。虽然高通切入 MS/Meta，但 KG 没说英伟达被替代——把'竞争对手新进入'等同于'英伟达失去客户'是过度推断。"
+    pattern: 英伟达.*失去.*(微软|Meta|谷歌).*(订单|客户|合同)
+    why: KG 中没有英伟达被任一大客户取消订单/失去客户的事件。虽然高通切入 MS/Meta，但 KG 没说英伟达被替代——把'竞争对手新进入'等同于'英伟达失去客户'是过度推断。

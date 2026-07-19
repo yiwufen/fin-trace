@@ -1,60 +1,63 @@
+# 标注文件 —— 由 judge --commit 自动回填 aliases。手工编辑请保留 schema。
 scenario: scenario-3-multi-hop
 annotation_meta:
-  annotator: "draft-by-subagent"
-  annotation_date: "2026-07-18"
-  kg_scope: "3-hop from seed entities（线上 KG，不冻结快照）"
-  notes: "草稿 GT，待人工 review。基于 run 20260718-120543-a7bb770 的 raw_event_archive 独立标注。scenario-3 是 negative-result 场景：must_find 是 absence 本身；known_false 重点是任何虚构的英伟达-特斯拉直接业务关系。"
-
+  annotator: draft-by-subagent
+  annotation_date: '2026-07-18'
+  kg_scope: 3-hop from seed entities（线上 KG，不冻结快照）
+  notes: >-
+    草稿 GT，待人工 review。基于 run 20260718-120543-a7bb770 的 raw_event_archive 独立标注。scenario-3 是 negative-result 场景：must_find 是
+    absence 本身；known_false 重点是任何虚构的英伟达-特斯拉直接业务关系。
 known_findings:
-  # ── must_find (2) ──
   - id: gt_f_1
-    statement: "英伟达与特斯拉之间不存在直接的业务合作、供应链关系或技术授权关系。"
+    statement: 英伟达与特斯拉之间不存在直接的业务合作、供应链关系或技术授权关系。
     category: absence
     importance: must_find
-    key_entities: ["英伟达", "特斯拉"]
+    key_entities:
+      - 英伟达
+      - 特斯拉
     min_evidence: 2
     aliases: []
-
   - id: gt_f_2
-    statement: "英伟达与特斯拉的同向股价波动属于大型科技股/半导体板块的市场情绪联动，受宏观政策与共同的市场情绪驱动，而非企业间的因果传导，不能作为多跳业务关联的证据。"
+    statement: 英伟达与特斯拉的同向股价波动属于大型科技股/半导体板块的市场情绪联动，受宏观政策与共同的市场情绪驱动，而非企业间的因果传导，不能作为多跳业务关联的证据。
     category: chain
     importance: must_find
-    key_entities: ["英伟达", "特斯拉"]
+    key_entities:
+      - 英伟达
+      - 特斯拉
     min_evidence: 3
     aliases: []
-
-  # ── should_find (1) ──
   - id: gt_f_3
-    statement: "可识别的间接传导链路：英伟达 7/16-17 持续下跌（权重股）触发市场对科技板块的避险情绪，特斯拉等大型科技股随之回调——这是一条'权重股 → 板块情绪'的间接市场传导链，而非英伟达→特斯拉的企业关系链。"
+    statement: 可识别的间接传导链路：英伟达 7/16-17 持续下跌（权重股）触发市场对科技板块的避险情绪，特斯拉等大型科技股随之回调——这是一条'权重股 → 板块情绪'的间接市场传导链，而非英伟达→特斯拉的企业关系链。
     category: chain
     importance: should_find
-    key_entities: ["英伟达", "特斯拉"]
+    key_entities:
+      - 英伟达
+      - 特斯拉
     min_evidence: 2
-    aliases: []
-
-  # ── nice_to_find (1) ──
+    aliases:
+      - finding_d58d4410-5380-4563-b759-ee4c6bf4ded3
   - id: gt_f_4
-    statement: "若放宽视角，英伟达与特斯拉都间接关联到'AI 算力/芯片'主题：特斯拉自研次世代 AI5 芯片（由三星 2nm 代工），英伟达则是 AI 算力龙头；但 KG 中没有二者在芯片层面直接合作的证据，属于行业主题共现而非企业关系。"
+    statement: 若放宽视角，英伟达与特斯拉都间接关联到'AI 算力/芯片'主题：特斯拉自研次世代 AI5 芯片（由三星 2nm 代工），英伟达则是 AI 算力龙头；但 KG 中没有二者在芯片层面直接合作的证据，属于行业主题共现而非企业关系。
     category: chain
     importance: nice_to_find
-    key_entities: ["英伟达", "特斯拉"]
+    key_entities:
+      - 英伟达
+      - 特斯拉
     min_evidence: 1
     aliases: []
-
 known_threads:
   - id: gt_t_1
-    description: "7/16-17 英伟达权重股下跌 → 美股三大指数集体收跌 → 特斯拉等大型科技股同步下跌的板块情绪传导链（非业务因果）。"
+    description: 7/16-17 英伟达权重股下跌 → 美股三大指数集体收跌 → 特斯拉等大型科技股同步下跌的板块情绪传导链（非业务因果）。
     key_events:
-      - ku_id: "ku_eb3a1dcecc4c7afd"   # 7/16 英伟达跌幅扩大至 3%
-      - ku_id: "ku_246ea7888103dc29"   # 7/17 英伟达续跌 4.33%
-      - ku_id: "ku_eee13e19e13fbca5"   # 7/17 美股普跌，英伟达/特斯拉同跌超 2%
+      - ku_id: ku_eb3a1dcecc4c7afd
+      - ku_id: ku_246ea7888103dc29
+      - ku_id: ku_eee13e19e13fbca5
     causal_direction: forward
     aliases: []
-
 known_false:
   - id: fp_1
-    pattern: "(英伟达|NVIDIA).*(向|为|给).*(特斯拉|Tesla).*(供应|提供|交付).*(芯片|GPU|算力|HBM)"
-    why: "KG 中没有任何英伟达向特斯拉供应 GPU/芯片/HBM 的事件。特斯拉 AI5 芯片由三星代工，与英伟达无关。声称英伟达-特斯拉存在直接芯片供应关系是严重幻觉。"
+    pattern: (英伟达|NVIDIA).*(向|为|给).*(特斯拉|Tesla).*(供应|提供|交付).*(芯片|GPU|算力|HBM)
+    why: KG 中没有任何英伟达向特斯拉供应 GPU/芯片/HBM 的事件。特斯拉 AI5 芯片由三星代工，与英伟达无关。声称英伟达-特斯拉存在直接芯片供应关系是严重幻觉。
   - id: fp_2
-    pattern: "(英伟达|特斯拉).*(收购|投资|入股|合资).*(特斯拉|英伟达)"
-    why: "KG 中没有任何英伟达与特斯拉之间的相互投资/收购/合资事件。两者仅在各自独立的投融资事件中出现（如英伟达参投 Walden Robotics、特斯拉与三星SDI ESS 合作）。"
+    pattern: (英伟达|特斯拉).*(收购|投资|入股|合资).*(特斯拉|英伟达)
+    why: KG 中没有任何英伟达与特斯拉之间的相互投资/收购/合资事件。两者仅在各自独立的投融资事件中出现（如英伟达参投 Walden Robotics、特斯拉与三星SDI ESS 合作）。
