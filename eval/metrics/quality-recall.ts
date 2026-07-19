@@ -35,11 +35,13 @@ export function computeRecall(input: RecallComputeInput): RecallComputeOutput {
       buckets[gt.importance].hit += 1;
     } else if (result.matched_finding_id && isApproximateCandidate(result.rule_scores)) {
       // 近似但未命中 → 写入 audit-pending
+      const candidate = agentFindings.find((f) => f.id === result.matched_finding_id);
       auditItems.push({
         gt_id: gt.id,
         gt_statement: gt.statement,
         gt_importance: gt.importance,
         candidate_finding_id: result.matched_finding_id,
+        candidate_statement: candidate?.statement ?? null,
         rule_scores: result.rule_scores,
         verdict: "unjudged",
       });
@@ -50,6 +52,7 @@ export function computeRecall(input: RecallComputeInput): RecallComputeOutput {
         gt_statement: gt.statement,
         gt_importance: gt.importance,
         candidate_finding_id: null,
+        candidate_statement: null,
         rule_scores: result.rule_scores,
         verdict: "unjudged",
       });

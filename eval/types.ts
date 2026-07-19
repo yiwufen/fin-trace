@@ -114,6 +114,9 @@ export interface AuditPendingItem {
   gt_statement: string;
   gt_importance: FindingImportance;
   candidate_finding_id: string | null;
+  // candidate 的 statement 文本——用于人工裁决时无需切看 raw-output.json，
+  // 也用于 judgment pass 回填到 GT aliases（文本跨 run 有效，UUID 则失效）
+  candidate_statement: string | null;
   rule_scores: { jaccard: number; keyword_overlap: number; category_match: boolean };
   verdict: "unjudged";
 }

@@ -10,6 +10,8 @@ const JUDGMENTS_DIR = resolve(import.meta.dirname, "../judgments");
 interface WorksheetVerdict {
   gt_id: string;
   candidate_finding_id: string | null;
+  // candidate 的 statement 文本——回填到 GT aliases 时用文本（跨 run 稳定），而非 finding_id（UUID 每次 run 变）
+  candidate_statement: string | null;
   verdict: "unjudged" | "match" | "no_match" | "partial";
 }
 
@@ -28,6 +30,7 @@ export function renderWorksheet(audit: AuditPending, runId: string, scenarioId: 
     verdicts: audit.items.map((it) => ({
       gt_id: it.gt_id,
       candidate_finding_id: it.candidate_finding_id,
+      candidate_statement: it.candidate_statement,
       verdict: "unjudged",
     })),
   };
@@ -84,7 +87,12 @@ export function parseWorksheet(scenarioId: string): WorksheetFrontMatter | null 
 }
 
 // 把裁决回填到 ground-truth yaml 的 aliases 字段
-// 规则：verdict=match 或 partial → 把 candidate_finding_id 作为 alias 加入对应 known_finding
+// 规则：verdict=match 或 partial → 把 candidate 的 STATEMENT 文本作为 alias 加入对应 known_finding
+//
+// 设计要点（Bug 2 修复, 2026-07-19）：
+// alias 必须是 TEXT（agent finding 的 statement 文本），不是 finding_id UUID。
+// 原因：agent 用随机 UUID 生成 finding.id，每次 run 都不同，存 UUID 跨 run 失效。
+// 存 statement 文本则只要 agent 仍表达同样含义就会再次出现，matchFinding 能用文本相似度认出。
 export function applyVerdictsToGroundTruth(
   scenarioId: string,
   verdicts: WorksheetVerdict[],
@@ -92,12 +100,17 @@ export function applyVerdictsToGroundTruth(
 ): GroundTruth {
   // 构建 gt_id → finding 查找
   const gtMap = new Map(currentGt.known_findings.map((f) => [f.id, f]));
+  // 清理遗留的 UUID-style aliases（旧机制 commit 91c1480 写入的，跨 run 已失效）
+  for (const gt of currentGt.known_findings) {
+    gt.aliases = gt.aliases.filter((a) => !a.startsWith("finding_"));
+  }
   for (const v of verdicts) {
     if (v.verdict !== "match" && v.verdict !== "partial") continue;
     const gt = gtMap.get(v.gt_id);
     if (!gt) continue;
-    if (v.candidate_finding_id && !gt.aliases.includes(v.candidate_finding_id)) {
-      gt.aliases.push(v.candidate_finding_id);
+    // 用 statement 文本作为 alias（跨 run 稳定）
+    if (v.candidate_statement && !gt.aliases.includes(v.candidate_statement)) {
+      gt.aliases.push(v.candidate_statement);
     }
   }
   return currentGt;

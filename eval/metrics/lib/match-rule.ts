@@ -67,40 +67,42 @@ export function matchFinding(
   };
 
   for (const f of agentFindings) {
-    // 优先：alias 可能是人工裁决回填的 finding_id（Task 6 的 applyVerdictsToGroundTruth 写入）
-    // 这种情况下人工已认定语义等价，直接算命中（仍校验 min_evidence）
-    const aliasFindingIdMatch = (gt.aliases ?? []).includes(f.id);
-    if (aliasFindingIdMatch) {
-      const evidencePass = f.evidence.length >= gt.min_evidence;
-      if (evidencePass) {
-        return {
-          matched: true,
-          matched_finding_id: f.id,
-          rule_scores: { jaccard: 1, keyword_overlap: 1, category_match: true },
-        };
-      }
-    }
+    // alias 是人工裁决回填的"语义等价表述"（agent finding 的 statement 文本）。
+    // 设计要点（Bug 2 修复, 2026-07-19）：alias 必须是 TEXT 而非 finding_id UUID——
+    // UUID 每次 run 都变（agent 用随机 UUID 生成 finding.id），跨 run 失效；
+    // statement 文本则只要 agent 还在表达同样的核心含义就会再次出现。
+    const aliases = (gt.aliases ?? []).filter((a) => a && !a.startsWith("finding_"));
+    const hasAlias = aliases.length > 0;
 
     const categoryMatch = f.category === gt.category;
     const jaccard = entityJaccard(gt.key_entities, f.entities_involved);
-    // keyword overlap：考虑 gt.statement + aliases（这里 aliases 是自然语言等价表述，非 finding_id）
-    const gtTexts = [gt.statement, ...(gt.aliases ?? []).filter((a) => !a.startsWith("finding_"))];
+
+    // keyword overlap：考虑 gt.statement + aliases
+    // alias 是历史 run 中被人工判定等价的 agent 表述，把它一起纳入关键词比对
+    const gtTexts = [gt.statement, ...aliases];
     let maxKw = 0;
     for (const t of gtTexts) {
       maxKw = Math.max(maxKw, keywordOverlap(t, f.statement));
     }
-    // 也比对 entities_involved 与 aliases（alias 可能是实体表述）
-    const entityAliasMatch = (gt.aliases ?? []).some((alias) =>
-      !alias.startsWith("finding_") &&
+    // alias 也可能是实体表述（短 alias 如"台积电"），与 agent entities 比对
+    const entityAliasMatch = aliases.some((alias) =>
       f.entities_involved.some((e) => e.includes(alias) || alias.includes(e)),
     );
+    // 关键：alias 与当前 finding 的高文本相似度 → 视为人工已认定等价的复发
+    // （alias 自己就是历史 agent 表述；如果当前 finding 接近它，说明 agent 又说了同样的话）
+    const aliasTextMatch = hasAlias && aliases.some((alias) => keywordOverlap(alias, f.statement) >= 0.5);
 
-    // 命中需同时满足：实体 Jaccard ≥ 0.5 + category 相同 + 关键词重叠 ≥ 0.6 + evidence ≥ min_evidence
-    // aliases 命中可放宽：alias 实体匹配 → 视为 Jaccard 通过
+    // 命中条件：
+    //   常规：category + Jaccard≥0.5 + kw≥0.6 + evidence≥min_evidence
+    //   entity alias 放宽 Jaccard：alias 实体匹配 → Jaccard 通过
+    //   alias 文本复发：alias 与 finding 高度相似 → 整体命中（绕过 kw 阈值）
+    //     （因为 alias 是历史 run 已认定等价的表述，复发时若措辞仍接近就应算命中）
     const jaccardPass = jaccard >= 0.5 || entityAliasMatch;
     const kwPass = maxKw >= 0.6;
     const evidencePass = f.evidence.length >= gt.min_evidence;
-    const matched = categoryMatch && jaccardPass && kwPass && evidencePass;
+    const matched = evidencePass && (
+      aliasTextMatch || (categoryMatch && jaccardPass && kwPass)
+    );
 
     const scores = { jaccard, keyword_overlap: maxKw, category_match: categoryMatch };
 
