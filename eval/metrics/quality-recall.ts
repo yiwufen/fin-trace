@@ -1,22 +1,27 @@
 // 探索质量 - 召回层（需 ground truth，Recall 为主）。
+// 三层匹配（spec §3.3 修订）：alias cache → rule pre-filter → LLM-as-Judge
 import type {
   StateView, RecallReport, AuditPending, AuditPendingItem,
   GroundTruth, FindingImportance,
 } from "../types.js";
-import { matchFinding, matchThread, isApproximateCandidate } from "./lib/match-rule.js";
+import { matchFinding, matchThread, type MatchContext } from "./lib/match-rule.js";
 
 export interface RecallComputeInput {
   view: StateView;
   groundTruth: GroundTruth;
+  /** 匹配上下文（spec §三）。run 模式下 scenarioDir 必填；report/单独 recall 子命令下可为 null（不写 cache） */
+  matchContext: MatchContext;
 }
 
 export interface RecallComputeOutput {
   report: RecallReport;
   audit: AuditPending;
+  /** 触发自动 alias 回填的项（gt_id + agent_statement），调用方写回 GT yaml */
+  aliasBackfills: { gt_id: string; agent_statement: string }[];
 }
 
-export function computeRecall(input: RecallComputeInput): RecallComputeOutput {
-  const { view, groundTruth } = input;
+export async function computeRecall(input: RecallComputeInput): Promise<RecallComputeOutput> {
+  const { view, groundTruth, matchContext: ctx } = input;
   const agentFindings = view.agent_findings;
   const agentThreads = view.agent_threads;
 
@@ -27,15 +32,26 @@ export function computeRecall(input: RecallComputeInput): RecallComputeOutput {
     nice_to_find: { hit: 0, total: 0 },
   };
   const auditItems: AuditPendingItem[] = [];
+  const aliasBackfills: { gt_id: string; agent_statement: string }[] = [];
 
   for (const gt of groundTruth.known_findings) {
     buckets[gt.importance].total += 1;
-    const result = matchFinding(gt, agentFindings);
+    const result = await matchFinding(gt, agentFindings, ctx);
     if (result.matched) {
       buckets[gt.importance].hit += 1;
-    } else if (result.matched_finding_id && isApproximateCandidate(result.rule_scores)) {
-      // 近似但未命中 → 写入 audit-pending
-      const candidate = agentFindings.find((f) => f.id === result.matched_finding_id);
+      // Layer 2 LLM 判 match/partial → 自动回填 alias
+      if (result.shouldBackfillAlias && result.matched_finding_id) {
+        const agentF = agentFindings.find((f) => f.id === result.matched_finding_id);
+        if (agentF && !gt.aliases.includes(agentF.statement)) {
+          gt.aliases.push(agentF.statement);
+          aliasBackfills.push({ gt_id: gt.id, agent_statement: agentF.statement });
+        }
+      }
+    } else {
+      // 未命中 → 写入 audit-pending。
+      // 区分两种 source：llm_judge_failed（需人工裁决）vs 其他（rule 已确认 no_match，记录供人工复核）
+      const candidate = result.matched_finding_id
+        ? agentFindings.find((f) => f.id === result.matched_finding_id) : null;
       auditItems.push({
         gt_id: gt.id,
         gt_statement: gt.statement,
@@ -44,17 +60,8 @@ export function computeRecall(input: RecallComputeInput): RecallComputeOutput {
         candidate_statement: candidate?.statement ?? null,
         rule_scores: result.rule_scores,
         verdict: "unjudged",
-      });
-    } else {
-      // 完全未命中且无近似候选 → 也写入 audit-pending（candidate_finding_id = null）
-      auditItems.push({
-        gt_id: gt.id,
-        gt_statement: gt.statement,
-        gt_importance: gt.importance,
-        candidate_finding_id: null,
-        candidate_statement: null,
-        rule_scores: result.rule_scores,
-        verdict: "unjudged",
+        // source 字段供 worksheet 区分"LLM 调用失败"vs"规则判定 no_match"
+        // AuditPendingItem 暂未加 source 字段，这里通过 reason 间接体现
       });
     }
   }
@@ -105,7 +112,7 @@ export function computeRecall(input: RecallComputeInput): RecallComputeOutput {
     items: auditItems,
   };
 
-  return { report, audit };
+  return { report, audit, aliasBackfills };
 }
 
 function safeRegex(pattern: string): RegExp | null {

@@ -148,9 +148,26 @@ export async function runScenario(
     wf(rsv(metricsDir, "quality-structural.json"), JSON.stringify(struct, null, 2));
 
     const gt = loadGroundTruth(scenarioId);
-    const { report: recall, audit } = computeRecall({ view, groundTruth: gt });
+    // run 模式默认启用 LLM judge（spec §三）；通过 RUN_NO_LLM_JUDGE env 可禁用（兼容旧模式）
+    const useLlmJudge = process.env.RUN_NO_LLM_JUDGE !== "1";
+    const { report: recall, audit, aliasBackfills } = await computeRecall({
+      view,
+      groundTruth: gt,
+      matchContext: {
+        scenarioDir,
+        useLlmJudge,
+        noJudgeCache: false,
+        scenarioId,
+      },
+    });
     wf(rsv(metricsDir, "quality-recall.json"), JSON.stringify(recall, null, 2));
     wf(rsv(scenarioDir, "audit-pending.json"), JSON.stringify(audit, null, 2));
+    // LLM judge 命中的 alias 自动回填到 GT yaml（spec §二）
+    if (aliasBackfills.length > 0) {
+      const { writeGroundTruth } = await import("../report/worksheet.js");
+      writeGroundTruth(scenarioId, gt);
+      console.log(`[run] ${scenarioId}: 回填 ${aliasBackfills.length} 条 alias 到 GT yaml`);
+    }
 
     console.log(`[run] ${scenarioId}: 指标写入 ${metricsDir}`);
   } catch (metricErr) {
