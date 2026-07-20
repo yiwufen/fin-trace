@@ -74,8 +74,8 @@ entities_involved: ${input.agent_entities.join(", ")}
 注意：不要因为 Agent 的措辞不同于 GT 就判 no_match；关注核心结论是否被回答。
 注意：你是 GT 的辩护人——你的任务是判断 Agent 有没有回答 GT 问的问题，而不是反过来。
 
-只输出 JSON，不要其他文字：
-{"verdict": "match|partial|no_match", "reason": "一句话理由"}`;
+只输出 JSON，不要其他文字（reason 控制在 30 字以内）：
+{"verdict": "match|partial|no_match", "reason": "简短理由"}`;
 }
 
 // ─── JSON 解析（容忍 LLM 输出前后多余的文本）───
@@ -126,7 +126,7 @@ async function callLlmOnce(prompt: string): Promise<{ text: string; tokensUsed: 
   const config = readConfig();
   const response = await client.messages.create({
     model: config.llm.model,
-    max_tokens: 200,
+    max_tokens: 400,  // 200 不够：中文 reason 一句话就要 50+ tokens，verdict+reason 容易被截断
     system: "你是严格的金融分析师评审，只输出 JSON。",
     messages: [{ role: "user", content: prompt }],
   });
