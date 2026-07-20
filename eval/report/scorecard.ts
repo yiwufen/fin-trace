@@ -14,6 +14,12 @@ export interface ScenarioScorecard {
   recall: RecallReport | null;
   audit_items_count: number;
   reliability_note: string | null;
+  // LLM judge 信息（spec §六修订）：用于 scorecard 显示自评偏置提示
+  judge_info: {
+    enabled: boolean;
+    model: string;          // judge 用的模型
+    self_eval: boolean;     // true = judge 与 agent 同模型（自评偏置）
+  } | null;
   // 运行概要（spec §7）：从 raw-output.json 的 exploration_meta 提取
   // 用于让读者理解效率数字的上下文（如 token_budget 截断时 efficiency 天然偏低）
   run_summary: {
@@ -45,7 +51,7 @@ export function buildScenarioScorecard(
     return {
       scenario: scenarioId, run_id: runId, run_status: "failed",
       efficiency: null, structural: null, recall: null, audit_items_count: 0,
-      reliability_note: null, run_summary: null, error: err.error,
+      reliability_note: null, run_summary: null, judge_info: null, error: err.error,
     };
   }
 
@@ -53,6 +59,19 @@ export function buildScenarioScorecard(
   const structural = readJsonIfExists(resolve(base, "metrics/quality-structural.json")) as StructuralQualityReport | null;
   const recall = readJsonIfExists(resolve(base, "metrics/quality-recall.json")) as RecallReport | null;
   const audit = readJsonIfExists(resolve(base, "audit-pending.json")) as { items: unknown[] } | null;
+
+  // 从 manifest.json 提取 judge 信息（spec §六修订）
+  const manifestPath = resolve("eval/runs", runId, "manifest.json");
+  const manifest = readJsonIfExists(manifestPath) as {
+    llm_model?: string;
+    judge_model?: string;
+    judge_enabled?: boolean;
+  } | null;
+  const judge_info = manifest ? {
+    enabled: manifest.judge_enabled !== false,
+    model: manifest.judge_model ?? manifest.llm_model ?? "unknown",
+    self_eval: manifest.judge_model === manifest.llm_model,
+  } : null;
 
   // 从 raw-output.json 提取运行概要（spec §7 要求的字段）
   // raw-output.json 由 runner 写入；failed path 上面已 return，这里它必然存在
@@ -84,6 +103,7 @@ export function buildScenarioScorecard(
     audit_items_count: audit?.items?.length ?? 0,
     reliability_note: recall?.reliability_note ?? null,
     run_summary,
+    judge_info,
   };
 }
 
@@ -145,6 +165,17 @@ export function renderScenarioScorecardMd(sc: ScenarioScorecard): string {
   }
   if (sc.reliability_note) {
     lines.push(`| Reliability Note | ${sc.reliability_note} |`);
+  }
+  // LLM judge 信息（spec §六修订）：让读者知晓 recall 数字背后的判定方式 + 自评偏置
+  if (sc.judge_info) {
+    const ji = sc.judge_info;
+    if (!ji.enabled) {
+      lines.push(`| Judge | 关闭（rule-only 模式，recall 数字与 PR #4 同口径） |`);
+    } else if (ji.self_eval) {
+      lines.push(`| Judge | ${ji.model} ⚠️ 与 agent 同模型（自评偏置，recall 可能系统性偏高） |`);
+    } else {
+      lines.push(`| Judge | ${ji.model} |`);
+    }
   }
 
   // 探索效率

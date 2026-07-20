@@ -184,6 +184,9 @@ export function writeManifest(runId: string, scenarioIds: string[]): RunManifest
     llm_model: readLlmModel(),
     kg_endpoint: readKgEndpoint(),
     golden_set_sha: goldenSetSha(),
+    // LLM judge 默认开启（spec §三）；RUN_NO_LLM_JUDGE=1 禁用
+    judge_model: readLlmModel(),  // 当前与 agent 同模型（自评偏置，见 spec §五）
+    judge_enabled: process.env.RUN_NO_LLM_JUDGE !== "1",
   };
   const manifestDir = resolve(RUNS_DIR, runId);
   mkdirSync(manifestDir, { recursive: true });
