@@ -18,7 +18,8 @@ known_findings:
       - 英特尔
       - 高通
     min_evidence: 3
-    aliases: []
+    aliases:
+      - 英伟达在AI芯片市场面临AMD、英特尔、高通三大主要竞争对手，其中高通正在通过为微软和Meta提供AI芯片方案快速切入市场。
   - id: gt_f_2
     statement: 高通披露微软、Meta 将采用其全新 AI 芯片方案，并为另外两家未具名超大型云厂商开发定制化芯片，直接切入英伟达主导的 AI 训练/推理芯片市场；微软同步确认将在 Azure 数据中心部署高通高带宽计算芯片。
     category: concentration
@@ -28,7 +29,8 @@ known_findings:
       - 微软
       - Meta
     min_evidence: 2
-    aliases: []
+    aliases:
+      - 高通披露微软、Meta将采用其全新AI芯片方案，并计划为两家未具名超大型云厂商定制芯片，直接威胁英伟达在AI推理和训练芯片市场的地位。
   - id: gt_f_3
     statement: 英特尔 CEO 陈立武主导战略转型：投资重心从先进制程代工转向 EMIB 先进封装、玻璃基板及氮化镓/碳化硅等新材料领域，并于 7 月与谷歌云深化 Gemini 生成式 AI 合作，构建差异化竞争路径。
     category: chain

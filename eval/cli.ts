@@ -29,6 +29,9 @@ const { positionals, values } = parseArgs({
     commit: { type: "boolean", default: false },
     "run-id": { type: "string" },
     baseline: { type: "string" },
+    // LLM judge 控制（spec §三）：
+    "no-llm-judge": { type: "boolean", default: false },   // 仅用 rule pre-filter（兼容 PR #4 行为）
+    "no-judge-cache": { type: "boolean", default: false }, // 强制重调 LLM（debug）
   },
   args: process.argv.slice(2),
 });
@@ -94,17 +97,19 @@ switch (subcommand) {
     break;
   }
   case "recall": {
-    // 用法: npx tsx eval/cli.ts recall <run-id> <scenario-id>
+    // 用法: npx tsx eval/cli.ts recall <run-id> <scenario-id> [--no-llm-judge] [--no-judge-cache]
     // 隐藏命令：读已有 run 的 raw-output/state + ground truth，算 recall，写 metrics/quality-recall.json + audit-pending.json
+    // 默认启用 LLM judge；match/partial 自动回填 alias 到 GT yaml
     const { computeRecall } = await import("./metrics/quality-recall.js");
     const { buildStateView } = await import("./metrics/lib/state-view.js");
     const { loadGroundTruth } = await import("./runner/golden-loader.js");
+    const { writeGroundTruth } = await import("./report/worksheet.js");
     const { readFileSync, mkdirSync, writeFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const rid = positionals[1];
     const sid = positionals[2];
     if (!rid || !sid) {
-      console.error("用法: npx tsx eval/cli.ts recall <run-id> <scenario-id>");
+      console.error("用法: npx tsx eval/cli.ts recall <run-id> <scenario-id> [--no-llm-judge] [--no-judge-cache]");
       process.exit(1);
     }
     const base = resolve("eval/runs", rid, sid);
@@ -112,12 +117,27 @@ switch (subcommand) {
     const stateRaw = JSON.parse(readFileSync(resolve(base, "raw-state.json"), "utf-8"));
     const view = buildStateView({ output, state: stateRaw });
     const gt = loadGroundTruth(sid);
-    const { report, audit } = computeRecall({ view, groundTruth: gt });
+    const useLlmJudge = values["no-llm-judge"] !== true;
+    const { report, audit, aliasBackfills } = await computeRecall({
+      view,
+      groundTruth: gt,
+      matchContext: {
+        scenarioDir: base,
+        useLlmJudge,
+        noJudgeCache: values["no-judge-cache"] === true,
+        scenarioId: sid,
+      },
+    });
     const outDir = resolve(base, "metrics");
     mkdirSync(outDir, { recursive: true });
     writeFileSync(resolve(outDir, "quality-recall.json"), JSON.stringify(report, null, 2));
     writeFileSync(resolve(base, "audit-pending.json"), JSON.stringify(audit, null, 2));
-    console.log(`[recall] ${sid}: must=${report.recall_must.hit}/${report.recall_must.total}, should=${report.recall_should.hit}/${report.recall_should.total}, thread_full=${report.thread_full_rate.full}/${report.thread_full_rate.total}, audit_items=${audit.items.length}`);
+    // 自动回填 alias 到 GT yaml（spec §二：LLM 判 match/partial → alias 自动持久化）
+    if (aliasBackfills.length > 0) {
+      writeGroundTruth(sid, gt);
+      console.log(`[recall] ${sid}: 回填 ${aliasBackfills.length} 条 alias 到 GT yaml`);
+    }
+    console.log(`[recall] ${sid}: must=${report.recall_must.hit}/${report.recall_must.total}, should=${report.recall_should.hit}/${report.recall_should.total}, thread_full=${report.thread_full_rate.full}/${report.thread_full_rate.total}, audit_items=${audit.items.length}${useLlmJudge ? "" : " (rule-only mode)"}`);
     break;
   }
   case "judge": {

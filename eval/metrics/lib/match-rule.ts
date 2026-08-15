@@ -1,6 +1,11 @@
-// 规则匹配：finding 命中判定 + thread 子序列判定 + 关键词 token 化。
-// 完全自实现，不 import src/agent/findings.ts。
+// Finding 匹配：三层架构（alias cache / rule pre-filter / LLM-as-Judge）
+// + Thread 子序列判定 + 关键词 token 化。
+// 完全自实现 finding 匹配的核心逻辑；LLM 调用委托给 llm-judge.ts。
+//
+// 设计文档：docs/superpowers/specs/2026-07-20-eval-llm-judge-design.md
 import type { AgentFindingView, AgentThreadView, KnownFinding, KnownThread } from "../../types.js";
+import { judgeFindingPair, makeCacheKey, JudgeError } from "./llm-judge.js";
+import { appendJudgeCall } from "./judge-cache.js";
 
 // ─── token 化（中文 bigram + 标点切分，不引入分词库）───
 export function tokenize(text: string): string[] {
@@ -56,64 +61,182 @@ export interface FindingMatchResult {
   rule_scores: { jaccard: number; keyword_overlap: number; category_match: boolean };
 }
 
-export function matchFinding(
+export interface MatchContext {
+  /** run 目录下的 scenario 子目录，用于写 judge cache 文件。run 模式下必填 */
+  scenarioDir: string | null;
+  /** false = 只用 rule pre-filter（兼容旧模式，等价于 PR #4 的 rule matching）；true = 启用 LLM judge */
+  useLlmJudge: boolean;
+  /** true = 忽略磁盘 cache 强制重调 LLM（debug 用） */
+  noJudgeCache: boolean;
+  /** 当前 GT 的 scenario id（写入 cache 记录用） */
+  scenarioId: string;
+}
+
+// 扩展 MatchResult：带 verdict + judge 来源（用于 audit-pending 区分）
+export interface FindingMatchResult {
+  matched: boolean;                // true = match 或 partial；false = no_match
+  verdict: "match" | "partial" | "no_match";
+  matched_finding_id: string | null;
+  rule_scores: { jaccard: number; keyword_overlap: number; category_match: boolean };
+  /** 判定来自哪一层：alias / rule_prefilter_no / llm_judge / llm_judge_failed */
+  source: "alias" | "rule_prefilter_no" | "llm_judge" | "llm_judge_failed";
+  /** LLM judge 给出的理由（仅 source=llm_judge 时有） */
+  reason?: string;
+  /** LLM judge 是否应回填 alias（仅 match/partial 时为 true） */
+  shouldBackfillAlias: boolean;
+}
+
+export async function matchFinding(
   gt: KnownFinding,
   agentFindings: AgentFindingView[],
-): FindingMatchResult {
-  let best: FindingMatchResult = {
-    matched: false,
-    matched_finding_id: null,
+  ctx: MatchContext,
+): Promise<FindingMatchResult> {
+  const noMatch: FindingMatchResult = {
+    matched: false, verdict: "no_match", matched_finding_id: null,
     rule_scores: { jaccard: 0, keyword_overlap: 0, category_match: false },
+    source: "rule_prefilter_no", shouldBackfillAlias: false,
   };
+  if (agentFindings.length === 0) return noMatch;
 
+  // 加载磁盘 cache（仅 LLM judge 模式且未禁用 cache 时）
+  let cache: Map<string, import("./llm-judge.js").JudgeCallRecord> | null = null;
+  if (ctx.useLlmJudge && !ctx.noJudgeCache && ctx.scenarioDir) {
+    const { loadJudgeCache } = await import("./judge-cache.js");
+    cache = loadJudgeCache(ctx.scenarioDir);
+  }
+
+  // 遍历 agent findings，找最佳匹配。一旦 match/partial 立即返回。
+  let bestCandidate: FindingMatchResult | null = null;
   for (const f of agentFindings) {
-    // alias 是人工裁决回填的"语义等价表述"（agent finding 的 statement 文本）。
-    // 设计要点（Bug 2 修复, 2026-07-19）：alias 必须是 TEXT 而非 finding_id UUID——
-    // UUID 每次 run 都变（agent 用随机 UUID 生成 finding.id），跨 run 失效；
-    // statement 文本则只要 agent 还在表达同样的核心含义就会再次出现。
-    const aliases = (gt.aliases ?? []).filter((a) => a && !a.startsWith("finding_"));
-    const hasAlias = aliases.length > 0;
-
     const categoryMatch = f.category === gt.category;
     const jaccard = entityJaccard(gt.key_entities, f.entities_involved);
-
-    // keyword overlap：考虑 gt.statement + aliases
-    // alias 是历史 run 中被人工判定等价的 agent 表述，把它一起纳入关键词比对
-    const gtTexts = [gt.statement, ...aliases];
-    let maxKw = 0;
-    for (const t of gtTexts) {
-      maxKw = Math.max(maxKw, keywordOverlap(t, f.statement));
-    }
-    // alias 也可能是实体表述（短 alias 如"台积电"），与 agent entities 比对
-    const entityAliasMatch = aliases.some((alias) =>
-      f.entities_involved.some((e) => e.includes(alias) || alias.includes(e)),
-    );
-    // 关键：alias 与当前 finding 的高文本相似度 → 视为人工已认定等价的复发
-    // （alias 自己就是历史 agent 表述；如果当前 finding 接近它，说明 agent 又说了同样的话）
-    const aliasTextMatch = hasAlias && aliases.some((alias) => keywordOverlap(alias, f.statement) >= 0.5);
-
-    // 命中条件：
-    //   常规：category + Jaccard≥0.5 + kw≥0.6 + evidence≥min_evidence
-    //   entity alias 放宽 Jaccard：alias 实体匹配 → Jaccard 通过
-    //   alias 文本复发：alias 与 finding 高度相似 → 整体命中（绕过 kw 阈值）
-    //     （因为 alias 是历史 run 已认定等价的表述，复发时若措辞仍接近就应算命中）
-    const jaccardPass = jaccard >= 0.5 || entityAliasMatch;
-    const kwPass = maxKw >= 0.6;
+    const scores = { jaccard, keyword_overlap: 0, category_match: categoryMatch };
     const evidencePass = f.evidence.length >= gt.min_evidence;
-    const matched = evidencePass && (
-      aliasTextMatch || (categoryMatch && jaccardPass && kwPass)
-    );
 
-    const scores = { jaccard, keyword_overlap: maxKw, category_match: categoryMatch };
+    // ─── Layer 0: Alias 缓存 ───
+    const aliases = (gt.aliases ?? []).filter((a) => a && !a.startsWith("finding_"));
+    if (aliases.length > 0) {
+      const aliasTextMatch = aliases.some((alias) => keywordOverlap(alias, f.statement) >= 0.5);
+      const entityAliasMatch = aliases.some((alias) =>
+        f.entities_involved.some((e) => e.includes(alias) || alias.includes(e)),
+      );
+      if ((aliasTextMatch || entityAliasMatch) && evidencePass) {
+        return {
+          matched: true, verdict: "match", matched_finding_id: f.id,
+          rule_scores: { jaccard, keyword_overlap: aliasTextMatch ? 1 : scores.keyword_overlap, category_match: categoryMatch },
+          source: "alias", shouldBackfillAlias: false,  // 已经在 alias 里，不重复回填
+        };
+      }
+    }
 
-    // 记录最高分（用于 audit-pending 判定）
-    if (matched && !best.matched) {
-      best = { matched: true, matched_finding_id: f.id, rule_scores: scores };
-    } else if (!best.matched && (scores.jaccard > best.rule_scores.jaccard || scores.keyword_overlap > best.rule_scores.keyword_overlap)) {
-      best = { matched: false, matched_finding_id: f.id, rule_scores: scores };
+    // ─── Layer 1: Rule pre-filter ───
+    // 实体 Jaccard ≥ 0.2 AND (category 相同 OR 实体重合 ≥ 0.5) AND evidence ≥ min
+    const prefilterPass = jaccard >= 0.2 && (categoryMatch || jaccard >= 0.5) && evidencePass;
+    if (!prefilterPass) {
+      // pre-filter 淘汰：记录为候选（用于 audit-pending），但不是命中
+      if (!bestCandidate || scores.jaccard > bestCandidate.rule_scores.jaccard) {
+        bestCandidate = {
+          matched: false, verdict: "no_match", matched_finding_id: f.id,
+          rule_scores: scores, source: "rule_prefilter_no", shouldBackfillAlias: false,
+        };
+      }
+      continue;
+    }
+
+    // ─── Layer 2a: 兼容模式（不调 LLM）── 用旧 rule matching（kw≥0.6）
+    if (!ctx.useLlmJudge) {
+      const maxKw = keywordOverlap(gt.statement, f.statement);
+      scores.keyword_overlap = maxKw;
+      if (categoryMatch && jaccard >= 0.5 && maxKw >= 0.6) {
+        return {
+          matched: true, verdict: "match", matched_finding_id: f.id,
+          rule_scores: scores, source: "llm_judge" /* 兼容字段 */, shouldBackfillAlias: false,
+        };
+      }
+      if (!bestCandidate || scores.jaccard > bestCandidate.rule_scores.jaccard) {
+        bestCandidate = {
+          matched: false, verdict: "no_match", matched_finding_id: f.id,
+          rule_scores: scores, source: "rule_prefilter_no", shouldBackfillAlias: false,
+        };
+      }
+      continue;
+    }
+
+    // ─── Layer 2b: LLM judge ───
+    scores.keyword_overlap = keywordOverlap(gt.statement, f.statement);
+    const cacheKey = makeCacheKey({
+      gt_statement: gt.statement, gt_category: gt.category, gt_key_entities: gt.key_entities,
+      agent_statement: f.statement, agent_category: f.category, agent_entities: f.entities_involved,
+    });
+
+    // 先查磁盘 cache
+    if (cache && !ctx.noJudgeCache) {
+      const { lookupCache } = await import("./judge-cache.js");
+      const cached = lookupCache(cache, cacheKey);
+      if (cached) {
+        const matched = cached.verdict === "match" || cached.verdict === "partial";
+        if (matched) {
+          return {
+            matched: true, verdict: cached.verdict, matched_finding_id: f.id,
+            rule_scores: scores, source: "llm_judge", reason: cached.reason,
+            shouldBackfillAlias: false,  // cache 命中说明之前已回填过（或这层不重复回填）
+          };
+        }
+        // cache 里是 no_match：记录候选，继续找下一个
+        if (!bestCandidate || scores.jaccard > bestCandidate.rule_scores.jaccard) {
+          bestCandidate = {
+            matched: false, verdict: "no_match", matched_finding_id: f.id,
+            rule_scores: scores, source: "llm_judge", reason: cached.reason, shouldBackfillAlias: false,
+          };
+        }
+        continue;
+      }
+    }
+
+    // cache miss：调 LLM
+    try {
+      const { result, tokensUsed } = await judgeFindingPair({
+        gt_statement: gt.statement, gt_category: gt.category, gt_key_entities: gt.key_entities,
+        agent_statement: f.statement, agent_category: f.category, agent_entities: f.entities_involved,
+      });
+      // 写 cache
+      if (ctx.scenarioDir) {
+        const { appendJudgeCall } = await import("./judge-cache.js");
+        const { readConfig } = await import("../../../src/agent/config.js");
+        appendJudgeCall(ctx.scenarioDir, {
+          cache_key: cacheKey, gt_id: gt.id, agent_finding_id: f.id,
+          category_match: categoryMatch, jaccard,
+          verdict: result.verdict, reason: result.reason,
+          model: readConfig().llm.model, timestamp: new Date().toISOString(),
+          tokens_used: tokensUsed,
+        });
+      }
+      if (result.verdict === "match" || result.verdict === "partial") {
+        return {
+          matched: true, verdict: result.verdict, matched_finding_id: f.id,
+          rule_scores: scores, source: "llm_judge", reason: result.reason,
+          shouldBackfillAlias: true,  // 让调用方把 agent statement 写入 gt.aliases
+        };
+      }
+      // LLM 判 no_match：继续找下一个 finding
+      if (!bestCandidate || scores.jaccard > bestCandidate.rule_scores.jaccard) {
+        bestCandidate = {
+          matched: false, verdict: "no_match", matched_finding_id: f.id,
+          rule_scores: scores, source: "llm_judge", reason: result.reason, shouldBackfillAlias: false,
+        };
+      }
+    } catch (err) {
+      // LLM 失败（重试后仍失败）：写 audit-pending，记录为 judge_failed
+      if (!bestCandidate || scores.jaccard > bestCandidate.rule_scores.jaccard) {
+        bestCandidate = {
+          matched: false, verdict: "no_match", matched_finding_id: f.id,
+          rule_scores: scores, source: "llm_judge_failed",
+          reason: (err as Error).message, shouldBackfillAlias: false,
+        };
+      }
     }
   }
-  return best;
+  return bestCandidate ?? noMatch;
 }
 
 // ─── "近似候选"判定（用于 audit-pending）───

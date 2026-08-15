@@ -134,4 +134,7 @@ export interface RunManifest {
   llm_model: string;
   kg_endpoint: string;
   golden_set_sha: string; // git short sha of eval/golden/
+  // LLM-as-Judge（spec §六修订）：
+  judge_model: string;       // 用于 finding 匹配的 LLM 模型名（可能与 llm_model 相同 = 自评）
+  judge_enabled: boolean;    // false = 用 rule pre-filter 兼容模式，无 LLM 调用
 }
