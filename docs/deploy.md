@@ -56,7 +56,7 @@ ssh deployer@182.61.1.77 'cd ~/fin-trace && docker compose up -d registry && doc
 ssh deployer@182.61.1.77 'grep admin_token ~/fin-trace/data/settings.json'
 ```
 
-浏览器访问 `https://fin.182-61-1-77.nip.io/admin`，输入令牌登录管理后台。
+浏览器访问 `https://fin.yiyiyiwufeng.cn/admin`，输入令牌登录管理后台。
 
 ## 日常部署
 

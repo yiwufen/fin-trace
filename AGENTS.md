@@ -111,7 +111,7 @@ Master index: `design-docs/README.md` â€” refer there for the full list, the v2â
   "mcp": {
     "servers": {
       "knowledge-graph": {
-        "url": "https://182-61-1-77.nip.io/mcp",
+        "url": "https://kg.yiyiyiwufeng.cn/mcp",
         "transport": "streamable-http",
         "api_key": ""
       }
