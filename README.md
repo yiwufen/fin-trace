@@ -29,7 +29,7 @@
 
 直接在浏览器里试用，无需本地部署：
 
-> 🔗 https://fin.182-61-1-77.nip.io/s/6ivLlHN0i-ivP-NBO8ZB2kpb
+> 🔗 https://fin.yiyiyiwufeng.cn/s/6ivLlHN0i-ivP-NBO8ZB2kpb
 
 限量 10 次使用（分享令牌，见下方[产品形态](#产品形态)）。
 
@@ -160,7 +160,7 @@ POST http://localhost:3001/a2a                            # A2A JSON-RPC
   "mcpServers": {
     "knowledge-graph": {
       "transport": "streamable-http",
-      "url": "https://182-61-1-77.nip.io/mcp"
+      "url": "https://kg.yiyiyiwufeng.cn/mcp"
     }
   }
 }
