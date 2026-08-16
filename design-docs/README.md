@@ -44,12 +44,8 @@ Graph Explorer Agent 是金融知识图谱上的多跳关系推理专用 Agent�
 | 固定 128k 预算 | config 驱动（`llm.max_tokens`，兜底 128k），78/16/6 分池不变 |
 | 80/90/100 预算阶梯 | 85% 压缩 / 90% 警告 / 95% 再压缩 / 100% 强制收敛 |
 
-## ⚠️ 文档漂移警告
-
-`state.md`、`tools.md`、`context-assembly.md`、`error-handling.md`、`findings.md`、
-`system-prompt.md`、`event-threads.md`、`agent-loop.md`、`agent-card.md` 中仍有
-v2 遗留内容（温层/event_buffer/recall 工具/低置信暂存等），**与现行代码有漂移，重写待办**。
-冲突时以 `src/` 实现为准。
+九份核心 spec 已于 2026-08 对齐 v3 代码，每份带状态头（已对齐 SHA）；
+改 agent 核心行为的 PR 须同 PR 更新对应文档并刷新 SHA（AGENTS.md 约束）。
 
 ## 文档索引
 
@@ -57,14 +53,14 @@ v2 遗留内容（温层/event_buffer/recall 工具/低置信暂存等），**�
 |------|------|
 | [agent-loop-redesign-v3.md](agent-loop-redesign-v3.md) | v3 双层循环架构（部分实现，见文首状态注） |
 | [neodata-integration.md](neodata-integration.md) | neodata 金融数据集成设计（**未实现**，设计阶段） |
-| [system-prompt.md](system-prompt.md) | 内层 System Prompt 六层完整文本（含 FINALIZE 段） |
-| [tools.md](tools.md) | 5 个 KG 工具 schema（⚠️ 文中"3 个内存读取工具"章节已废弃） |
-| [state.md](state.md) | 数据模型（State/Finding/EventThread 等；⚠️ v2 漂移） |
-| [agent-loop.md](agent-loop.md) | 内层 Agent Loop Phase 状态机与流程 |
-| [findings.md](findings.md) | Key Findings 提取规则（触发、去重、confidence） |
+| [system-prompt.md](system-prompt.md) | System Prompt 六层结构 + 设计意图 + prompt.ts 源码锚点 |
+| [tools.md](tools.md) | 5 个 KG 工具 schema + MCP 映射 + 二部图 hops 换算 |
+| [state.md](state.md) | 数据模型（State/三分流 Finding/EventThread 等） |
+| [agent-loop.md](agent-loop.md) | 内层 Agent Loop Phase 状态机与 P0-P5 终止链 |
+| [findings.md](findings.md) | Finding 提取规则（触发、flag_target 路由、去重、加权 confidence） |
 | [event-threads.md](event-threads.md) | FINALIZE Prompt + Thread 构建规则 + 验证 |
-| [error-handling.md](error-handling.md) | 恢复动作 + 预算分池 + FINALIZE 降级（⚠️ v2 漂移） |
-| [context-assembly.md](context-assembly.md) | State View + Token 分池（⚠️ 温层/recall 章节已废弃） |
+| [error-handling.md](error-handling.md) | 四类恢复动作 + 预算阶梯 + FINALIZE 降级 |
+| [context-assembly.md](context-assembly.md) | State View 注入 + 四级压缩阶梯 + Token 分池 |
 | [agent-card.md](agent-card.md) | A2A Agent Card + JSON-RPC 接口契约 |
 | [data-taxonomy.md](data-taxonomy.md) | 事件数据分类（EventDataType 权重 / LLM 批量分类 / 流式过滤）— 已实现 |
 | [three-tier-architecture.md](three-tier-architecture.md) | 三层热/温/冷架构根因分析（**DEPRECATED**，仅作演进记录） |
@@ -89,4 +85,4 @@ v2 遗留内容（温层/event_buffer/recall 工具/低置信暂存等），**�
 - 想知道 Finding 怎么提取 → [findings.md](findings.md)
 - 想知道 Thread 怎么构建 → [event-threads.md](event-threads.md)
 - 想出问题了怎么办 → [error-handling.md](error-handling.md)
-- 想知道上下文怎么管理 → [context-assembly.md](context-assembly.md)（three-tier 已废弃，现行看 `src/agent/context.ts`）
+- 想知道上下文怎么管理 → [context-assembly.md](context-assembly.md)（three-tier 已废弃，仅作演进记录）

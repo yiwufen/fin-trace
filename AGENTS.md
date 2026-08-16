@@ -93,9 +93,7 @@ Registry: localhost:5000 (仅本机)，Caddy 上无暴露路由
 
 ## Design Document Index
 
-Master index: `design-docs/README.md` — refer there for the full list including deprecated and archived docs.
-
-**Important**: the agent core went through a v3 refactor (五意图重构, see `design-docs/archive/graph-agent-v2-changelog-2026-06-02.md`) that removed the warm-layer/recall-tool design. Several specs (`state.md`, `tools.md`, `context-assembly.md`, `error-handling.md`, etc.) still describe the superseded v2 model — rewrite is pending. When a design doc contradicts `src/`, the code is the truth.
+Master index: `design-docs/README.md` — refer there for the full list, the v2→v3 terminology baseline, and the archive. The nine core specs were realigned to the v3 code (五意图架构) in 2026-08 and each carries a status header (`已对齐: <SHA>`).
 
 ## Project Configuration
 
@@ -147,7 +145,8 @@ Four types: `pattern_violation`, `concentration`, `chain`, `absence`. Extraction
 These constraints are binding — treat them as hard limits when editing code.
 
 ### Implementation Fidelity（实现保真）
-- `design-docs/` is the specification for the agent core. Implement as written, don't improvise architecture — but when a doc is known-drifted (v2 leftovers, see Design Document Index), `src/` is the truth.
+- `design-docs/` is the documentation of record for the agent core (kept aligned to `src/`, each doc carries a 状态头 with an alignment SHA). Implement as written, don't improvise architecture.
+- **PRs that change agent-core behavior must update the corresponding design doc in the same PR and refresh its alignment SHA (状态头"已对齐").**
 - The 5 KG tools (lookup, trace, timeline, expand, scan) are fixed — do not add, remove, or rename tools.
 - One semantic hop per tool call is enforced at the mapping layer; depth control is the Agent Loop's job, not a tool parameter to change.
 
