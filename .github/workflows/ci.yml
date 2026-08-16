@@ -1,7 +1,7 @@
 name: CI
 
 # PR / push main: 代码验证。typecheck + docker build（只验证构建，不推送不部署）。
-# 发布走 deploy.yml（push tag v*.*.* 触发）。
+# 发布走 deploy.yml（push tag vX.Y.Z 触发）。
 
 on:
   push:

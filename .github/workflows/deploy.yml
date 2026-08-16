@@ -1,6 +1,6 @@
 name: Release
 
-# 发布流程：push tag v*.*.* 触发（tag 必须打在 main 分支提交上，
+# 发布流程：push tag vX.Y.Z 触发（tag 必须打在 main 分支提交上，
 # 部署时服务器 git pull origin main 同步 compose/脚本）。
 #   1. typecheck + docker build → 推 GHCR（:vX.Y.Z 和 :latest）
 #   2. SSH 服务器：写 .env → compose pull → up -d → 健康检查重试
@@ -8,7 +8,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*.*.*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 concurrency:
   group: deploy

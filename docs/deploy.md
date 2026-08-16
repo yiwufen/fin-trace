@@ -44,6 +44,10 @@ sudo systemctl daemon-reload
 sudo systemctl restart docker   # ⚠ 所有容器短暂中断，选低峰执行
 
 # 下线本地 registry（镜像分发已迁移 GHCR）
+# git 走代理（服务器无法直连 GitHub）
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export no_proxy=localhost,127.0.0.1
 cd ~/fin-trace
 git pull origin main
 docker rm -f fin-trace-registry

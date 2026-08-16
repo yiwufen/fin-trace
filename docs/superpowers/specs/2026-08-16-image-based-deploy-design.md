@@ -36,7 +36,7 @@
 | 事件 | 工作流 | 行为 |
 |------|--------|------|
 | PR / push main | `ci.yml`（新建） | typecheck + `docker build`（验证构建，不推送不部署） |
-| push tag `v*.*.*` | `deploy.yml`（重写） | typecheck → buildx 构建 → 推 GHCR → SSH 部署该 tag → 健康检查 |
+| push tag `vX.Y.Z` | `deploy.yml`（重写） | typecheck → buildx 构建 → 推 GHCR → SSH 部署该 tag → 健康检查 |
 
 - main 分支从此只验证，不部署
 - 版本号约定 `vX.Y.Z`：X 破坏性变更、Y 功能、Z 修复
@@ -60,8 +60,8 @@ ssh → cd ~/fin-trace
    → echo "IMAGE_TAG=vX.Y.Z" > .env
    → docker compose pull fin-trace（dockerd 走代理）
    → docker compose up -d --remove-orphans
-   → 健康检查（curl 重试循环 ~60s，替代原 sleep 10 单次探测）
    → docker image prune -f
+   → 健康检查（curl 重试循环 ~60s，替代原 sleep 10 单次探测）
 ```
 
 - `docker-compose.yml` 镜像改为 `ghcr.io/yiwufen/fin-trace:${IMAGE_TAG:-latest}`

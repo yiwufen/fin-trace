@@ -4,7 +4,7 @@
 
 **Goal:** 把部署从"服务器端构建"迁移为"CI 构建镜像推 GHCR + tag 触发 + 服务器只拉取"。
 
-**Architecture:** push tag `v*.*.*` 触发 `deploy.yml`：typecheck → buildx 构建镜像 → 推 `ghcr.io/yiwufen/fin-trace:vX.Y.Z` + `:latest` → SSH 服务器写 `.env` 固定 `IMAGE_TAG` → `docker compose pull` + `up -d` → 健康检查重试循环。push main / PR 只跑验证（`ci.yml`：typecheck + docker build）。本地 registry 及其脚本全部移除。
+**Architecture:** push tag `vX.Y.Z` 触发 `deploy.yml`：typecheck → buildx 构建镜像 → 推 `ghcr.io/yiwufen/fin-trace:vX.Y.Z` + `:latest` → SSH 服务器写 `.env` 固定 `IMAGE_TAG` → `docker compose pull` + `up -d` → 健康检查重试循环。push main / PR 只跑验证（`ci.yml`：typecheck + docker build）。本地 registry 及其脚本全部移除。
 
 **Tech Stack:** GitHub Actions（docker/build-push-action v6 + buildx + gha cache、appleboy/ssh-action v1）、GHCR、docker compose（`.env` 变量插值）。
 
@@ -153,7 +153,7 @@ git commit -m "build: drop BUILD_PROXY, images are built in CI only"
 ```yaml
 # fin-trace
 #
-# 部署流程（CI，push tag v*.*.* 触发）:
+# 部署流程（CI，push tag vX.Y.Z 触发）:
 #   GitHub Actions: docker build → push ghcr.io/yiwufen/fin-trace:vX.Y.Z (+ latest)
 #   → SSH 服务器: git pull（同步配置）→ 写 .env (IMAGE_TAG)
 #     → docker compose pull → up -d → 健康检查
@@ -225,7 +225,7 @@ git commit -m "chore(compose): switch to GHCR image, remove local registry"
 name: CI
 
 # PR / push main: 代码验证。typecheck + docker build（只验证构建，不推送不部署）。
-# 发布走 deploy.yml（push tag v*.*.* 触发）。
+# 发布走 deploy.yml（push tag vX.Y.Z 触发）。
 
 on:
   push:
@@ -282,7 +282,7 @@ git commit -m "ci: add PR/main validation workflow"
 ```yaml
 name: Release
 
-# 发布流程：push tag v*.*.* 触发（tag 必须打在 main 分支提交上，
+# 发布流程：push tag vX.Y.Z 触发（tag 必须打在 main 分支提交上，
 # 部署时服务器 git pull origin main 同步 compose/脚本）。
 #   1. typecheck + docker build → 推 GHCR（:vX.Y.Z 和 :latest）
 #   2. SSH 服务器：写 .env → compose pull → up -d → 健康检查重试
@@ -290,7 +290,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*.*.*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 concurrency:
   group: deploy
