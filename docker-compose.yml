@@ -1,18 +1,17 @@
-# fin-trace + Docker Registry
+# fin-trace
 #
-# 部署流程（CI 触发）:
-#   GitHub Actions SSH → 服务器 git pull → docker build (带代理)
-#   → docker push localhost:5000 → docker compose up -d（用本机刚构建的镜像）
+# 部署流程（CI，push tag v*.*.* 触发）:
+#   GitHub Actions: docker build → push ghcr.io/yiwufen/fin-trace:vX.Y.Z (+ latest)
+#   → SSH 服务器: git pull（同步配置）→ 写 .env (IMAGE_TAG)
+#     → docker compose pull → up -d → 健康检查
 #
-# Registry 仅供 localhost 访问，不对外暴露。
-# 注意: fin-trace 服务不设 pull_policy: always——镜像总是先在本机构建，
-# 强制 pull 反而引入对 ~/.docker/config.json 持久凭据的依赖（部署脚本
-# 的 config.json 备份/恢复会丢弃 docker login 写入的 auths）。
+# IMAGE_TAG 由部署脚本写入 .env（gitignored）；缺省 latest。
+# GHCR package 为 public，服务器匿名拉取（dockerd 走代理）。
 
 services:
   # ─── 应用 ───
   fin-trace:
-    image: localhost:5000/fin-trace:latest
+    image: ghcr.io/yiwufen/fin-trace:${IMAGE_TAG:-latest}
     container_name: fin-trace
     restart: unless-stopped
     user: "1000:1000"
@@ -27,23 +26,6 @@ services:
       - ./config.json:/app/config.json
     networks:
       - default
-      - knowledge-net
-
-  # ─── 私有 Docker Registry（仅 localhost:5000）───
-  registry:
-    image: registry:2
-    container_name: fin-trace-registry
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:5000:5000"
-    volumes:
-      - ./registry-data:/var/lib/registry
-      - ./registry-auth:/auth:ro
-    environment:
-      - REGISTRY_AUTH=htpasswd
-      - REGISTRY_AUTH_HTPASSWD_REALM=fin-trace Registry
-      - REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
-    networks:
       - knowledge-net
 
 networks:
