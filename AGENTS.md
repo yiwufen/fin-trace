@@ -61,31 +61,31 @@ No unit test runner is configured. Verification tooling:
 - `tests/e2e/` — e2e smoke scenarios
 - `skills/` — cross-platform skill definitions (e.g. `fin-trace.md`)
 - `docs/` — deployment guide (`deploy.md`), ops runbook, historical specs/plans (`docs/superpowers/`)
-- `scripts/` — one-time setup scripts (registry init)
 - `.github/workflows/` — CI/CD pipeline
 
 ## Deployment Architecture
 
 ```
-GitHub Actions (CI)              百度服务器 182.61.1.77 (CD)
-typecheck ──SSH 触发──→  git pull
-                         docker build --network host (走代理 127.0.0.1:7890)
-                         docker push localhost:5000
-                         docker compose pull + up -d
-                         health check (curl localhost:3001/)
+GitHub Actions                       百度服务器 182.61.1.77
+push tag vX.Y.Z ─→ typecheck         git pull（仅同步配置）
+                    buildx 构建镜像    写 .env IMAGE_TAG
+                    push GHCR ──SSH──→ compose pull + up -d
+                                      health check (curl localhost:3001/)
+push main / PR ─→ CI 仅验证（typecheck + docker build）
 
-Registry: localhost:5000 (仅本机)，Caddy 上无暴露路由
-镜像:    localhost:5000/fin-trace:latest
-环境:    deployer@182.61.1.77, ~/fin-trace/, 3.8 GB 内存
+镜像: ghcr.io/yiwufen/fin-trace:vX.Y.Z（+ latest，package public）
+环境: deployer@182.61.1.77, ~/fin-trace/（配置载体，不构建）, 3.8 GB 内存
 ```
 
 ### 部署关键约束
 
-- **服务器无法直连外网** — Docker Hub / npm 必须走 `127.0.0.1:7890` 代理
-- **构建用 `--network host`** — 否则容器内无法访问宿主机代理
-- **推送本地镜像前移除 Docker 客户端代理** — 否则 `localhost:5000` 也被劫持
+- **build once, deploy many** — 镜像只在 GitHub Actions 构建，服务器不构建；服务器 `git pull` 仅同步 compose/脚本
+- **tag 打在 main 提交上** — 部署时服务器 `git pull origin main`，tag 指向非 main 提交会导致 compose 与镜像不一致
+- **服务器无法直连外网** — dockerd 走代理 `127.0.0.1:7890` 拉取 ghcr.io（systemd drop-in，一次性配置）；重启 docker 会中断所有容器
+- **GHCR package 为 public** — 服务器匿名拉取，无服务器侧凭据；镜像不含密钥（config/data 均为 volume 挂载，`.dockerignore` 排除）
+- **回滚 = 重部署旧 tag** — `echo "IMAGE_TAG=<旧版>" > .env && docker compose pull && docker compose up -d`
+- **旧 Registry 数据目录不可 `--delete` 同步** — `registry-data/`、`registry-auth/` 需排除（本地 registry 已于 2026-08 下线，目录待清理）
 - **Caddy 修改后必须 `docker restart`** — `caddy reload` 有 bind mount 缓存（Caddy 属外部 knowledge-net 部署，不在本仓库）
-- **Registry 数据目录不可 `--delete` 同步** — `registry-data/`、`registry-auth/` 需排除
 - **CI 用独立 SSH 密钥对** — `ssh-keygen -t ed25519 -C "fin-trace-ci"` 生成，公钥写入 `authorized_keys`，私钥存 GitHub Secrets
 - 完整部署文档：`docs/deploy.md`
 - `config.json` — runtime configuration (gitignored; see `config.example.json`，首次启动会自动生成)
