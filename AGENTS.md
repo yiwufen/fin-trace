@@ -131,7 +131,7 @@ A second, UI-managed layer can override `config.json`: `data/settings.json` (edi
 ## Key Architectural Decisions
 
 - **Config-decoupled**: MCP endpoint and LLM settings live in `config.json`, not in agent code. The A2A Agent Card URL is derived from the server port.
-- **Single-hop tool primitives**: Each tool enforces `hops=1`; multi-hop behavior emerges from the Agent Loop composing calls sequentially
+- **Single-hop tool primitives**: Each tool fetches one *semantic* hop per call (the KG is an entity-event bipartite graph: one relationship = 2 edges, so the mapping layer sends `hops: 2` for trace — see `design-docs/tools.md`); multi-hop behavior emerges from the Agent Loop composing calls sequentially
 - **Phase isolation**: EXPLORING works on compressed/summary views; FINALIZE gets the full raw event archive injected
 - **Evidence traceability**: Every finding requires KU ID–backed evidence; threads validate ku_id existence against the event archive
 - **Budget-aware at every level**: Token budget is config-driven (`llm.max_tokens`, 128k fallback) with multi-level compression escalation; step budget (20 EXPLORING + 2 FINALIZE) checked each iteration
@@ -149,7 +149,7 @@ These constraints are binding — treat them as hard limits when editing code.
 ### Implementation Fidelity（实现保真）
 - `design-docs/` is the specification for the agent core. Implement as written, don't improvise architecture — but when a doc is known-drifted (v2 leftovers, see Design Document Index), `src/` is the truth.
 - The 5 KG tools (lookup, trace, timeline, expand, scan) are fixed — do not add, remove, or rename tools.
-- `hops=1` is enforced at tool level; depth control is the Agent Loop's job, not a tool parameter to change.
+- One semantic hop per tool call is enforced at the mapping layer; depth control is the Agent Loop's job, not a tool parameter to change.
 
 ### Config Decoupling（配置解耦）
 - MCP endpoint must be read from `config.json` at startup. Never hardcode URLs into source code.

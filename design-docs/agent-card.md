@@ -1,5 +1,12 @@
 # Agent Card — A2A 接口契约
 
+> 状态: 已实现（v3 五意图架构） | 已对齐: 33f02f7 (2026-08-16)
+>
+> 源码: `src/a2a/agent-card.ts`（卡片）、`src/a2a/handler.ts`（JSON-RPC 路由）。
+> ⚠️ 已知待修正: 代码中 skill description 仍含"延迟：depth=1 约 3-5 分钟，
+> depth=2 约 5-12 分钟"——max_depth 当前不构成终止条件（见 agent-loop.md），
+> 该句与实现不符，待代码侧修正（本次文档对齐不改卡片文本）。
+
 ## 核心原则
 
 Agent Card 是 A2A 协议的 self-describing contract。Host Agent（OpenClaw）通过 `a2a_discover` 自动拉取 `/.well-known/agent-card.json`，根据 skills 判断是否应将任务路由给 fin-trace——不需要硬编码集成。
@@ -11,19 +18,20 @@ Agent Card 是 A2A 协议的 self-describing contract。Host Agent（OpenClaw）
 ```json
 {
   "name": "fin-trace",
-  "description": "金融知识图谱多跳关系推理 Agent",
+  "description": "金融知识图谱多跳关系推理 Agent。在金融知识图谱上执行供应链追踪、传导路径分析、关联方排查。输入探索目标和起始实体，自主进行多跳探索，返回关键发现和事件脉络。",
   "protocolVersion": "1.0.0",
   "version": "1.0.0",
   "url": "http://localhost:3001/a2a",
   "capabilities": {
-    "streaming": true
+    "streaming": true,
+    "pushNotifications": false
   },
   "skills": [
     {
       "id": "graph_explore",
       "name": "金融知识图谱多跳探索",
-      "description": "在金融知识图谱上执行多跳关系推理。给定探索目标和起始实体，自主进行多跳探索，返回结构化关键发现（findings）和事件脉络（event_threads）。适合供应链追踪、传导路径分析、关联方排查、竞争对手关系分析。不适合单实体事实查询。延迟：depth=1 约 3-5 分钟，depth=2 约 5-12 分钟。",
-      "tags": ["graph", "supply-chain", "sanctions", "multi-hop", "risk", "compliance"],
+      "description": "…（见上方已知待修正注）…",
+      "tags": ["graph", "supply-chain", "sanctions", "multi-hop", "risk", "compliance", "financial-analysis"],
       "inputModes": ["text", "data"],
       "outputModes": ["text", "data"]
     }
@@ -35,6 +43,8 @@ Agent Card 是 A2A 协议的 self-describing contract。Host Agent（OpenClaw）
   }
 }
 ```
+
+逐字以 `src/a2a/agent-card.ts` `buildAgentCard()` 为准。
 
 ---
 
@@ -147,14 +157,16 @@ submitted → working → completed  (正常)
 
 ```typescript
 {
+  id: string;
   title: string;
   summary: string;              // 2-3 句
   narrative: string;            // 完整叙事
   thread_events: { ku_id, entity, event_type, timestamp, description }[];
   relationships: { from_idx, to_idx, type, reasoning }[];
   // type: "causal" | "temporal" | "entity_shared" | "contradiction"
-  time_span: { start, end };
+  time_span: { earliest: string; latest: string };
   confidence: "high" | "medium" | "low";
+  source_finding_ids: string[];
 }
 ```
 
@@ -162,8 +174,11 @@ submitted → working → completed  (正常)
 
 ```typescript
 {
-  completion_reason: "sufficient" | "max_steps" | "token_budget" | "no_data";
-  stats: { steps, entities_visited, findings_count };
+  completion_reason:
+    | "sufficient" | "depth_exhausted" | "token_budget" | "frontier_empty"
+    | "diminishing_returns" | "cancelled" | "mcp_unavailable";
+  // 注: depth_exhausted 在步数上限触发（命名历史遗留，见 agent-loop.md）
+  stats: { steps, entities_visited, findings_count, events_buffered, tokens_used };
   reliability_note: string | null;  // 非空 = 本次探索有降级
 }
 ```
