@@ -33,6 +33,17 @@ Graph Explorer Agent 是金融知识图谱上的多跳关系推理专用 Agent�
 > entity_flags / cluster_flags / key_insights，见
 > [archive/graph-agent-v2-changelog-2026-06-02.md](archive/graph-agent-v2-changelog-2026-06-02.md)）。
 
+## 术语基线（v2 → v3，所有文档统一）
+
+| v2 术语（废除） | v3 现实 |
+|---|---|
+| event_buffer / event_archive | `raw_event_archive`（仅 FINALIZE 注入） |
+| key_findings 单一列表 | `entity_flags` / `cluster_flags` / `key_insights` 三分流 |
+| frontier priority 1-3 | 准入控制 + `mention_count`（上限 10） |
+| low_confidence_findings 暂存 | 无此容器（无证据 finding 直接丢弃） |
+| 固定 128k 预算 | config 驱动（`llm.max_tokens`，兜底 128k），78/16/6 分池不变 |
+| 80/90/100 预算阶梯 | 85% 压缩 / 90% 警告 / 95% 再压缩 / 100% 强制收敛 |
+
 ## ⚠️ 文档漂移警告
 
 `state.md`、`tools.md`、`context-assembly.md`、`error-handling.md`、`findings.md`、
