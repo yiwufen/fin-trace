@@ -125,7 +125,8 @@ input.max_tokens，实际由 config 决定）。
 `sufficient` | `depth_exhausted` | `token_budget` | `frontier_empty` |
 `diminishing_returns` | `cancelled` | `mcp_unavailable`
 
-> 注: `depth_exhausted` 为枚举保留值（depth 终止未实现，见 agent-loop.md）。
+> 注: `depth_exhausted` 在步数上限触发（step_count ≥ 20），命名为历史遗留，
+> 与图深度无关；`max_depth` 输入当前不构成终止条件（已知缺口，见 agent-loop.md）。
 
 stats 含 `events_buffered`（历史命名，实指 raw_event_archive 计数）。
 
