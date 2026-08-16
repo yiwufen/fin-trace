@@ -46,7 +46,7 @@ sudo systemctl restart docker   # ⚠ 所有容器短暂中断，选低峰执行
 # 下线本地 registry（镜像分发已迁移 GHCR）
 cd ~/fin-trace
 git pull origin main
-docker compose rm -sf registry
+docker rm -f fin-trace-registry
 # registry-data/ registry-auth/ 目录暂保留，确认稳定后可手动清理
 ```
 
@@ -67,6 +67,8 @@ GHCR 推送用 `GITHUB_TOKEN`（workflow 内置 `packages: write`），无需配
 ```bash
 ssh deployer@182.61.1.77 'cd ~/fin-trace && docker compose up -d'
 ```
+
+首次启动需在首个 release tag 推送且 package 设为 public 之后执行（此前 GHCR 上尚无 latest 镜像）；存量服务器迁移无需此步。
 
 ### 4. 获取 admin_token
 

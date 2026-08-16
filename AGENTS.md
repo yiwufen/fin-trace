@@ -61,7 +61,6 @@ No unit test runner is configured. Verification tooling:
 - `tests/e2e/` — e2e smoke scenarios
 - `skills/` — cross-platform skill definitions (e.g. `fin-trace.md`)
 - `docs/` — deployment guide (`deploy.md`), ops runbook, historical specs/plans (`docs/superpowers/`)
-- `scripts/` — one-time setup scripts (registry init)
 - `.github/workflows/` — CI/CD pipeline
 
 ## Deployment Architecture

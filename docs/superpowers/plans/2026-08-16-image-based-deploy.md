@@ -470,7 +470,7 @@ sudo systemctl restart docker   # ⚠ 所有容器短暂中断，选低峰执行
 # 下线本地 registry（镜像分发已迁移 GHCR）
 cd ~/fin-trace
 git pull origin main
-docker compose rm -sf registry
+docker rm -f fin-trace-registry
 # registry-data/ registry-auth/ 目录暂保留，确认稳定后可手动清理
 ```
 
@@ -623,7 +623,7 @@ git commit -m "docs: rewrite deployment guide for image-based deploys"
 
 代码任务全部完成并合并 main 后，按 `docs/deploy.md` "初次部署"章节执行：
 
-1. 服务器：dockerd 代理 drop-in + `systemctl restart docker`（低峰）→ `docker compose rm -sf registry`
+1. 服务器：dockerd 代理 drop-in + `systemctl restart docker`（低峰）→ `docker rm -f fin-trace-registry`
 2. GitHub：删除 Secrets `REGISTRY_USER` / `REGISTRY_PASSWORD`
 3. `git tag v1.0.0 main && git push origin v1.0.0`
 4. deploy job 首次会因 package private 而失败 → GitHub UI 将 package `fin-trace` 切为 **Public** → re-run deploy job

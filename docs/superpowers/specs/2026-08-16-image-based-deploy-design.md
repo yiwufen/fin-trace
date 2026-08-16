@@ -80,7 +80,7 @@ ssh → cd ~/fin-trace
 
 - `docker-compose.yml` 删除 `registry` 服务（`knowledge-net` 外部网络保留，fin-trace 仍需）
 - 删除 `scripts/setup-registry.sh`
-- 服务器执行 `docker compose rm -sf registry`；`registry-data/`、`registry-auth/` 目录暂保留，日后清理
+- 服务器执行 `docker rm -f fin-trace-registry`；`registry-data/`、`registry-auth/` 目录暂保留，日后清理
 - GitHub Secrets 删除 `REGISTRY_USER` / `REGISTRY_PASSWORD`
 
 ## 回滚（手动，一行命令）
