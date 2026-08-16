@@ -1,22 +1,27 @@
-name: Deploy
+name: Release
 
-# CI: GitHub Actions 做类型检查 → SSH 触发服务器自构建部署
-# 服务器有代理 (127.0.0.1:7890)，构建后推本地 Registry (localhost:5000)，
-# docker compose pull + up -d，全程不走公网。
+# 发布流程：push tag v*.*.* 触发（tag 必须打在 main 分支提交上，
+# 部署时服务器 git pull origin main 同步 compose/脚本）。
+#   1. typecheck + docker build → 推 GHCR（:vX.Y.Z 和 :latest）
+#   2. SSH 服务器：写 .env → compose pull → up -d → 健康检查重试
+# 服务器 dockerd 已配代理（127.0.0.1:7890）；GHCR package 为 public，匿名拉取。
 
 on:
   push:
-    branches: [main]
+    tags: ['v*.*.*']
 
 concurrency:
   group: deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  deploy:
+  release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,64 +32,77 @@ jobs:
           node-version: 20
       - run: npm ci --include-workspace-root && npm run typecheck
 
-      - name: Deploy on Server
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/yiwufen/fin-trace:${{ github.ref_name }}
+            ghcr.io/yiwufen/fin-trace:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Deploy on server
         uses: appleboy/ssh-action@v1
         env:
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          TAG: ${{ github.ref_name }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 10m
-          command_timeout: 25m
-          envs: REGISTRY_USER,REGISTRY_PASSWORD
+          command_timeout: 10m
+          envs: TAG
           script: |
             set -euo pipefail
             cd ~/fin-trace
 
-            # git 走代理（服务器无法直连 GitHub）
+            # git 走代理（服务器无法直连 GitHub）；仅同步 compose/脚本，不构建。
+            # no_proxy 必须在 git pull 前设置，避免后续 curl localhost 被代理劫持。
             export http_proxy=http://127.0.0.1:7890
             export https_proxy=http://127.0.0.1:7890
-
-            echo "==> Pull latest code"
+            export no_proxy=localhost,127.0.0.1
             git pull origin main
-            SHA=$(git rev-parse --short HEAD)
 
-            echo "==> Build image (with proxy)"
-            docker build --network host \
-              --build-arg BUILD_PROXY=http://127.0.0.1:7890 \
-              -t localhost:5000/fin-trace:latest \
-              -t localhost:5000/fin-trace:"${SHA}" \
-              .
+            # 固定本次部署版本（compose 用 IMAGE_TAG 插值镜像 tag）
+            echo "IMAGE_TAG=${TAG}" > .env
 
-            echo "==> Push to local registry"
-            mv ~/.docker/config.json ~/.docker/config.json.bak 2>/dev/null || true
-            echo '{}' > ~/.docker/config.json
-            echo "${REGISTRY_PASSWORD}" | docker login localhost:5000 -u "${REGISTRY_USER}" --password-stdin
-            docker push localhost:5000/fin-trace:latest
-            docker push localhost:5000/fin-trace:"${SHA}"
-            mv ~/.docker/config.json.bak ~/.docker/config.json 2>/dev/null || true
-
-            echo "==> Deploy"
-            # 镜像在上一步刚构建于本机，compose up 直接使用本地镜像。
-            # 不做 docker compose pull：本地 registry 需要认证，而上方
-            # config.json 的备份/恢复会丢弃 docker login 写入的 auths，
-            # pull 会因 "no basic auth credentials" 失败。
+            # 拉取镜像 + 部署（pull 走 dockerd 代理，无需 shell 代理）
+            docker compose pull fin-trace
             docker compose up -d --remove-orphans
 
-            echo "==> Cleanup old images"
             docker image prune -f
 
-            echo "==> Health check"
-            sleep 10
-            if curl -fsS -o /dev/null http://localhost:3001/; then
-              echo "OK: fin-trace is healthy"
-            else
+            # 健康检查：最多重试 30 次 × 2s（约 1 分钟）
+            healthy=0
+            for i in $(seq 1 30); do
+              if curl -fsS -o /dev/null http://localhost:3001/; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            if [ "$healthy" != "1" ]; then
               echo "FAIL: fin-trace health check failed"
               docker compose logs --tail 30
               exit 1
             fi
 
-            echo "==> Done"
+            echo "OK: fin-trace ${TAG} is healthy"
             docker compose ps
