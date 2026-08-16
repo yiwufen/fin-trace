@@ -50,11 +50,13 @@ ssh deployer@182.61.1.77 'cd ~/fin-trace && docker compose up -d registry && doc
 
 ### 4. 获取 admin_token
 
+首次启动时服务会自动生成 `admin_token` 并写入 `data/settings.json`（**不会打印到日志**）：
+
 ```bash
-ssh deployer@182.61.1.77 'cd ~/fin-trace && docker compose logs' | grep admin_token
+ssh deployer@182.61.1.77 'grep admin_token ~/fin-trace/data/settings.json'
 ```
 
-用输出的深链 `https://fin.182-61-1-77.nip.io/?admin=<token>` 登录管理后台。
+浏览器访问 `https://fin.182-61-1-77.nip.io/admin`，输入令牌登录管理后台。
 
 ## 日常部署
 
@@ -116,8 +118,17 @@ ssh deployer@182.61.1.77 'tar czf - ~/fin-trace/data' > fin-trace-data-backup-$(
 | 项目路径 | ~/fin-trace/ |
 | Registry | localhost:5000 (仅本机) |
 | Registry 用户 | fin-trace |
-| Registry 密码 | kI7psKGk6hVZWPtzb/IE+dw3wuQiKQI0 |
-| Admin token | yNlMWVeB-K3md6T0cS3eIcum |
+| Registry 密码 | 见服务器 `~/fin-trace/registry-auth/`（**不要写入文档/git**） |
+| Admin token | 见服务器 `~/fin-trace/data/settings.json`（**不要写入文档/git**） |
+
+> ⚠️ **安全**: 早期版本的本文档曾明文写入过 Registry 密码与 admin token（已进入 git 历史）。若使用 2026-08 之前部署的环境，请轮换这两项凭据：重新运行 `scripts/setup-registry.sh` 生成新密码（并同步 GitHub Secrets），删除 `data/settings.json` 中的 `admin_token` 字段让服务重新生成。
+
+## Web 前端与账户系统
+
+- **无独立前端服务**：镜像构建已包含 web 前端（Dockerfile 多阶段构建中执行 `npm run build -w web`），由同一容器托管
+- **账户注册需邀请码**：邀请码在管理后台（`/admin`）维护，存于 `data/settings.json` 的 `web.invite_codes`
+- **用户数据**：`data/users.json`；备份 `data/` 目录即覆盖会话、设置（admin_token/邀请码）、分享令牌与用户
+- **健康检查**：CI 部署后 `curl http://localhost:3001/`（Dockerfile HEALTHCHECK 同源）
 
 ## 踩坑记录
 
@@ -128,15 +139,3 @@ ssh deployer@182.61.1.77 'tar czf - ~/fin-trace/data' > fin-trace-data-backup-$(
 ### npm install 需要代理 → `--network host`
 
 `docker build --network host --build-arg BUILD_PROXY=...` 让构建容器共享宿主机网络访问代理。
-
-### Caddy bcrypt hash 格式
-
-Apache htpasswd 的 `$2y$` 格式与 Caddy basic_auth 不兼容。不再需要（Registry 仅 localhost）。
-
-### caddy reload 不生效
-
-修改 Caddyfile 后必须 `docker restart knowledge-caddy`，reload 有缓存。
-
-### rsync --delete 误删
-
-排除 `data/`、`registry-data/`、`registry-auth/`、`config.json`。

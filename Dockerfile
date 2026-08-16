@@ -1,11 +1,10 @@
 # 多阶段构建：构建阶段装依赖 + 编译 TS + 构建 web；运行阶段只含产物
 #
-# 用法: docker compose up -d --build
-#
-# 构建期需要访问 npm registry —— 服务器（百度云）网络受限，
-# 通过宿主机 :7890 代理拉包。compose 已设 build.network: host，
-# 构建容器可直接访问 127.0.0.1:7890。代理地址由 build arg 传入，
-# 不设则不走代理（本地开发可用）。
+# 构建由 CI 在服务器上执行：docker build --network host \
+#   --build-arg BUILD_PROXY=http://127.0.0.1:7890 ...
+# （服务器无法直连外网，构建容器共享宿主机网络访问代理；
+#   compose 中无 build 配置，统一走上面的 docker build。
+#   本地构建不设 BUILD_PROXY 即可。）
 
 # ─── 构建阶段 ───
 FROM node:20-slim AS builder

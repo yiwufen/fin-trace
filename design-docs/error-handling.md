@@ -1,4 +1,10 @@
-# 异常处理 — 四类恢复 + 预算分池 + FINALIZE 降级
+# 异常处理 — 四类恢复 + 预算阶梯 + FINALIZE 降级
+
+> 状态: 已实现（v3 五意图架构） | 已对齐: 33f02f7 (2026-08-16)
+>
+> 源码: `src/agent/error-handler.ts`（格式修复/终止信号/循环检测/降级判定）、
+> `src/agent/loop.ts`（MCP 连接失败立即降级、压缩阶梯）。v3 删除了
+> recall_* 工具异常章节（工具已不存在）。
 
 ---
 
@@ -7,7 +13,7 @@
 | 动作 | 语义 | 何时用 |
 |------|------|--------|
 | Retry | 重试同一操作 | MCP 超时、LLM 格式错误 |
-| Fallback | 降级到备选方案 | MCP 不可用 → recall 工具；预算紧张 → 减少并行 |
+| Fallback | 降级到备选方案 | 预算紧张 → 减少并行；MCP 连接失败 → 立即降级返回 |
 | Skip | 跳过当前步骤 | 工具返回空结果、非关键实体查询失败 |
 | Abort | 终止探索 | MCP 完全不可用、连续失败超限 |
 
@@ -18,24 +24,16 @@
 | 异常 | 恢复 |
 |------|------|
 | 超时 | Retry（最多 1 次） |
-| 空结果 | Skip（标记实体为"无数据"，不阻塞后续探索） |
-| 错误响应 | 检查是否可降级。lookup 失败 → Skip；trace 失败 → Skip；expand 失败 → 标记 cluster 为"不可展开" |
-| MCP 连接断开 | 标记 mcp_degraded=true。后续探索仅用 recall_* 工具和已有 state 数据 |
+| 空结果 | **实体名变体重试**（见下），仍空 → Skip（标记实体"无数据"，不阻塞） |
+| 错误响应 | lookup/trace 失败 → Skip；expand 失败 → 标记 cluster "不可展开" |
+| 连接失败（启动时） | **立即降级返回**：`mcp_degraded=true` + completion_reason=`mcp_unavailable`，不做探索（不再有"降级到 recall 工具"路径——温层已删除） |
+| 运行中连续失败 | `tool_call_failures` 计数，连续 ≥3 → `mcp_degraded=true` + reliability_note |
 
----
+### 实体名变体重试（tryNameVariants）
 
-## 内存读取工具异常（recall_*）
-
-内存读取不涉及网络，异常类型简单：
-
-| 异常 | 处理 |
-|------|------|
-| 实体不在 visited 中 | 返回空结果 + 提示"该实体未被探索，请用 lookup" |
-| finding_id 不存在 | 返回 error + 可用 finding id 列表 |
-| event_buffer 为空 | 返回空 + 提示"尚未缓存任何事件" |
-| 数据在 archive（冷层） | 返回数据 + 标注 "archived" |
-
-**内存读取不需要 retry**——数据要么在温层，要么不在。数据不在不是异常，是信息。
+空结果时按序尝试：state 的 `nameIndex` 别名 → 内置别名表（宁德时代/CATL 等）→
+剥离括号内容 → 剥离"股份/集团/有限/公司/汽车"后缀。命中 nameIndex 直接换用
+规范名，不重复试错。
 
 ---
 
@@ -43,44 +41,40 @@
 
 | 异常 | 恢复 |
 |------|------|
-| 格式错误（缺 decision / tool_calls） | Retry（注入格式修复提示，最多 1 次） |
+| 格式错误（缺 decision/tool_calls） | `fixLLMOutput` 修复 + Retry（注入修复提示）；**连续 2 次失败 → 降级路径**（FINALIZE 阶段直接降级输出） |
 | 幻觉（引用不存在的 ku_id） | 代码验证时过滤，不阻塞 |
-| 决策循环（连续 N 步相同 decision + 相同工具） | 注入警告文本打破循环。超限 → force_strategy 切换策略 |
+| 决策循环（连续 4 步同决策且 finding 无增长） | `applyLoopBreak` 强制切换策略（expand→deep_dive/verify；deep_dive→verify；仍循环 → force_sufficient） |
 | 只输出 reasoning 无 tool_calls | Retry（注入"继续探索"指令） |
+
+终止信号容错（`extractStopSignal`）: 优先读显式 `stop`/`stop_reason` 字段
+（stop_reason 含 stale/block/no_progress → stalemate，否则 sufficient）；
+回退兼容旧 LLM 在 `decision` 里残留的 sufficient/stalemate。
 
 ---
 
-## 状态异常
+## 状态异常（预算阶梯）
 
-| 异常 | 恢复 |
+上下文估算 / exploring_limit（详见 [context-assembly.md](context-assembly.md)）:
+
+| 比值 | 动作 |
 |------|------|
-| 预算使用率 > 80% | event_buffer 上限降低、对话历史压缩升级 |
-| 预算使用率 > 90% | 在 State View 中注入警告："建议尽快 conclude" |
-| 预算使用率 >= 100% | 强制 FINALIZE |
-| tool_call_failures 连续 >= 3 | 标记 mcp_degraded |
-| frontier 连续 3 步无变化 | 注入"考虑切换策略"提示 |
+| ≥ 85% | 压缩 exploration_log；压缩后仍 >95% → FINALIZE |
+| ≥ 90% | 警告（token_warnings++，State View 注入"建议尽快 conclude"） |
+| ≥ 100% | 强制 FINALIZE |
+
+`tool_call_failures ≥ 3` → mcp_degraded 标记。
 
 ---
 
 ## FINALIZE 降级
 
-FINALIZE 是单点——如果这一步失败，整个探索没有输出。所以有三条路径：
+FINALIZE 是单点——失败则探索没有完整输出。三条路径：
 
 ```
 Path 1（正常）: LLM THINK → 输出 threads + final_findings → 代码验证 → 输出
-Path 2（LLM 失败）: 超时/格式错误 → 重试 1 次 → 仍失败 → 代码降级输出 findings + 空 threads
+Path 2（LLM 失败）: 超时/格式错误 → 修复重试 → 仍失败 → 代码降级输出 findings + 空 threads
 Path 3（验证失败）: LLM 输出合法但 threads 校验不通过 → 部分保留或全部丢弃 → findings 保留
 ```
 
-所有降级路径都附带 reliability_note。
-
----
-
-## 与旧版的关系
-
-旧版四类恢复动作（Retry/Fallback/Skip/Abort）仍然适用。v2 新增：
-- 内存读取异常处理
-- 预算分池告警 + 并行预检
-- FINALIZE 单点故障应对
-
-v2 改动是加层，不是替换。
+所有降级路径都附带 reliability_note；`generateReliabilityNote` 汇总
+mcp_degraded / force_sufficient / token_warnings / tool_call_failures 各项。

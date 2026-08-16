@@ -149,9 +149,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         hops: {
           type: "integer",
           default: 2,
-          minimum: 1,
-          maximum: 1,
-          description: "固定为 1——深度控制由 Agent Loop 执行",
+          minimum: 2,
+          maximum: 2,
+          description:
+            "固定为 2——KG 为实体-事件二部图，1 语义跳（实体→事件→实体）= 2 条边；映射层固定传 2，深度控制由 Agent Loop 组合调用实现",
         },
         time_range: {
           type: "string",

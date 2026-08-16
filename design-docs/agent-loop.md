@@ -1,6 +1,10 @@
 # Agent Loop — Phase 状态机与流程
 
-> 三层架构详见: [three-tier-architecture.md](three-tier-architecture.md)
+> 状态: 已实现（v3 五意图架构） | 已对齐: 33f02f7 (2026-08-16)
+>
+> 源码: `src/agent/loop.ts`（主循环 + Phase 切换）、`src/agent/error-handler.ts`
+> （决策校验/终止信号/循环检测）。上下文组装见 [context-assembly.md](context-assembly.md)，
+> Prompt 见 [system-prompt.md](system-prompt.md)。
 
 ---
 
@@ -8,108 +12,127 @@
 
 ```
 入口: runExploration(input)
-  ├─ 初始化 State（seed entities → frontier, budget 分池）
-  ├─ 组装 System Prompt + Goal
-  └─ 进入主循环
-
-主循环:
-  while (!done) {
-    assembleContext(state, phase)  → 上下文组装（见 context-assembly.md）
-    callLLM(messages, context)     → LLM 推理
-    if (EXPLORING) {
-      handleExploring(output)      → 处理探索步骤
-      checkPhaseTransition(state)  → 检查是否切换到 FINALIZE
-    } else {
-      handleFinalize(output)       → 处理 FINALIZE 输出
-      done = true
-    }
-    state.step_count++
-  }
+  ├─ MCP 连接（失败 → 立即降级返回 mcp_unavailable，不做探索）
+  ├─ initState（seed → frontier，预算分池，时间上下文注入）
+  └─ 主循环 while (!done):
+       assembleContext(state)   → 上下文组装（State View + 预算分层）
+       callLLM(messages)        → LLM 推理（usage 计入预算）
+       fixLLMOutput + parse     → 格式修复（连续 2 次失败 → 降级路径）
+       if (EXPLORING):
+         extractStopSignal      → stop 字段 → sufficient/stalemate（兼容旧 decision 残留）
+         validateDecision       → 钳制为 expand/deep_dive/verify
+         并行预检 → executeToolCalls（并行只读 / 串行写）
+         markVisited + archiveRawEvents（KU 去重归档）
+         LLM 批量事件分类（event_data_type，见 data-taxonomy.md）
+         shouldExtractFindings → findings 提取（三分流路由，见 findings.md）
+         checkContextBudget     → 四级压缩阶梯
+         checkPhaseTransition   → P0-P5 终止链
+       else (FINALIZE, 最多 2 步):
+         handleFinalize         → threads 构建 + 验证（见 event-threads.md）
+         done = true
   return assembleOutput(state)
 ```
 
 ---
 
-## EXPLORING 阶段: handleExploring
-
-每步执行流程：
+## EXPLORING 每步
 
 | 步骤 | 说明 |
 |------|------|
-| 1. 审核输出 | 验证 LLM 的 decision 和 tool_calls 合法性 |
-| 2. 并行预检 | 估算本轮工具调用的总 token 成本。超预算则降级为单工具或强制 FINALIZE |
-| 3. 执行工具 | 区分 MCP 调用 vs 内存读取（recall_*） |
-| 4. 存入温层 | MCP 工具结果全文存入 state（visited/buffer/findings），不注入 LLM |
-| 5. 生成压缩视图 | 从原始结果提取摘要 + 标题行，作为 LLM 可见的版本 |
-| 6. 注入对话 | 仅将压缩视图注入消息历史 |
-| 7. 更新预算 | 累计 token 消耗 |
-| 8. 处理 findings | 提取/去重/合并新 finding（见 findings.md） |
+| 1. 决策审核 | `validateDecision` 钳制为三种策略（expand/deep_dive/verify）；终止信号由独立 `stop` 字段经 `extractStopSignal` 合成 sufficient/stalemate |
+| 2. 并行预检 | 按 token 估算约束本轮调用（见下） |
+| 3. 执行工具 | `categorize` 分组：只读工具 `Promise.allSettled` 并行，写操作串行 |
+| 4. 归档 | `archiveRawEvents`：KU 按 ku_id 去重进 `raw_event_archive`（不注入 LLM） |
+| 5. 事件分类 | 新 KU 批量过 `CLASSIFY_PROMPT` 标注 `event_data_type`（structural_fact / streaming_snapshot / aggregate_metric / unknown） |
+| 6. findings 提取 | `shouldExtractFindings` 触发时提取（触发条件见 findings.md） |
+| 7. 预算与上下文 | usage 累计；`checkContextBudget` 四级阶梯 |
+| 8. Phase 检查 | `checkPhaseTransition` P0-P5 |
 
 ### 并行预检规则
 
-每工具有 token 估算（lookup~3k, trace~2k, timeline~2.5k, expand~2k/cluster, scan~1k/5entities）。
+token 估算（`TOOL_TOKEN_ESTIMATE`）: lookup 3k · trace 2k · timeline 2.5k ·
+expand 2k · scan 1k。剩余预算 = `exploring_limit − used_tokens`。
 
 | 条件 | 动作 |
 |------|------|
-| 多工具并行总成本 > 剩余预算 30% | 降级为只执行优先级最高的 1 个 |
-| 单工具成本 > 剩余预算 50% | 拒绝调用，force_sufficient=true |
+| 多工具并行总成本 > 剩余预算 30% | 只执行优先级最高的 1 个 |
+| 单工具成本 > 剩余预算 50% | 拒绝调用，`force_sufficient = true` |
 
-工具优先级排序：expand > trace > lookup = timeline > scan
+工具优先级（`pickMostImportantCall`）: **expand > trace > lookup = timeline > scan**
 
 ---
 
-## Phase 切换: checkPhaseTransition
+## Phase 切换: checkPhaseTransition（P0-P5 终止链）
 
-从 EXPLORING → FINALIZE 的 6 个条件（任一满足即切换）：
+按序检查，任一命中即 EXPLORING → FINALIZE：
 
 | # | 条件 | 说明 |
 |---|------|------|
-| 0 | EXPLORING 预算耗尽 | v2 新增。100k 用完即切 |
-| 1 | LLM stop = true（合成 sufficient） | LLM 认为信息充足。终止信号走独立的 `stop` 字段，`extractStopSignal` 兼容旧 LLM 在 `decision` 里残留的 sufficient/stalemate |
-| 2 | 连续 N 步无新 finding | 边际递减检测 |
-| 3 | frontier 为空 | 没有新的探索方向 |
-| 4 | step_count >= max_steps | 步数上限 |
-| 5 | depth >= max_depth | 深度上限 |
+| P0 | used_tokens ≥ exploring_limit | EXPLORING 预算耗尽 |
+| P1 | step_count ≥ 20 | 步数上限（`MAX_EXPLORING_STEPS`；FINALIZE 自身上限 2 步） |
+| P2 | frontier 为空 | 没有新的探索方向 |
+| P3 | LLM 提议 sufficient | **三重门校验**（不过门则继续探索，见下） |
+| P4 | 连续 2 轮 stalemate 且 finding 计数无增长 | 僵局检测 |
+| P5 | 决策循环 | 连续 4 步同决策且 finding 无增长 → `applyLoopBreak`；若破局后 `force_sufficient` 则终止 |
 
-> 注：`decision` 字段只承载探索策略（expand/deep_dive/verify），终止意图（sufficient/stalemate）由独立的 `stop`/`stop_reason` 字段表达。`handleExploring` 通过 `extractStopSignal` 把 stop 信号合成为 `effectiveDecision`（sufficient/stalemate），`last_n_decisions` 的下游语义保持不变。
+### P3 sufficient 三重门
+
+LLM 认为信息充足时，代码强制校验三关，任一不过 → 继续探索（EXPLORING）：
+
+| 门 | 阈值 | 不过时的动作 |
+|----|------|-------------|
+| 最少洞察 | `key_insights.length ≥ 1`（`MIN_FINDINGS`） | frontier 非空则继续 |
+| 近期产出 | 最近 3 步（`MIN_RECENT_PRODUCTIVITY_STEPS`）finding 计数有增长 | 继续 |
+| 实体覆盖 | visited 实体（有 entity_id）占 archive 全实体 ≥ 30%（`MIN_ENTITY_COVERAGE_RATIO`） | 继续，并注入覆盖提示 `injectHint` |
+
+### P5 applyLoopBreak（策略切换链）
+
+`expand → deep_dive`（frontier 非空）/ `verify`（空）；`deep_dive → verify`；
+其余 → `force_sufficient`。
+
+### max_depth 已知缺口
+
+`ExplorationInput.max_depth` 被调用方接受并透传（A2A handler / chat loop
+默认填 3），但内层循环**从不读取**——探索深度实际由步数/预算/门控决定。
+对外宣传已如实修正；是否实现 depth 终止是独立的功能决策。
+
+---
+
+## completion_reason 判定（determineCompletionReason）
+
+| 值 | 触发 |
+|----|------|
+| `mcp_unavailable` | MCP 连接失败且 step_count=0（优先判定，避免误报边际递减） |
+| `sufficient` | 最后决策为 sufficient |
+| `token_budget` | used_tokens ≥ exploring_limit |
+| `depth_exhausted` | step_count ≥ 20（**命名为历史遗留，实指步数耗尽**） |
+| `frontier_empty` | frontier 为空 |
+| `diminishing_returns` | 兜底（含 P4 僵局、P5 强停） |
+| `cancelled` | 外部取消 |
 
 ---
 
 ## FINALIZE 阶段: handleFinalize
 
-三条路径：
+三条路径（均附带 reliability_note）：
 
 | 路径 | 触发条件 | 输出 |
 |------|---------|------|
 | 正常 | LLM 成功输出 threads + final_findings | 完整结果 |
-| LLM 失败降级 | LLM 超时/格式错误，重试 1 次仍失败 | 直接用 key_findings（去重后），threads=[] |
-| 验证失败降级 | LLM 输出合法但 threads 校验不通过 | findings 保留，threads 丢弃或部分保留 |
+| LLM 失败降级 | LLM 调用失败 / parse 修复无效 | 原始 key_insights 去重作为 findings，threads=[] |
+| 验证降级 | threads 校验不通过 | findings 保留，threads 丢弃或部分保留 |
 
-降级时都附带 reliability_note 说明原因。
+**设计决策**: FINALIZE 不做新的 MCP 调用——数据已完整在 `raw_event_archive`
+（全量注入上下文，见 context-assembly.md）。
 
-**设计决策**: FINALIZE 不做新的 MCP 调用。数据已完整体现在温层。
-
----
-
-## Thread 验证（FINALIZE 输出的后处理）
-
-| 校验项 | 规则 | 失败处理 |
-|--------|------|---------|
-| ku_id 存在性 | 每个 thread_event 的 ku_id 必须在 event_buffer 中 | 移除幻觉事件，剩余 <3 则丢弃整条 Thread |
-| 时间线一致性 | causal 关系的 from_event 必须在 to_event 之前 | 标注问题但保留 |
-| 关系类型合法性 | 只允许 4 种类型 | 非法类型钳制为 entity_shared |
-| Thread 过长 | >10 个事件可能是过度串连 | 标注警告但保留 |
-
-索引偏移：移除幻觉事件后需要更新 relationship 的 from_idx/to_idx。
+Thread 验证规则（ku_id 存在性、时序、类型钳制、长度警告、索引重算）见
+[event-threads.md](event-threads.md)。
 
 ---
 
-## 终止条件（完整列表）
+## MCP 不可用处理
 
-| 条件 | 阶段 | 说明 |
-|------|------|------|
-| FINALIZE 完成 | FINALIZE | 正常结束 |
-| max_steps | EXPLORING | 步数上限 |
-| budget 耗尽 | EXPLORING | token 上限 |
-| force_sufficient | EXPLORING | 代码强制（预算紧张/工具失败过多） |
-| MCP 完全不可用 | EXPLORING | 降级标记 + 直接 FINALIZE |
+连接失败 → **立即降级返回**（无重试循环）：`mcp_degraded=true`、
+`reliability_note="知识图谱服务连接失败，探索未能执行"`、
+completion_reason=`mcp_unavailable`。运行中单次调用失败走
+error-handling.md 的工具级处理（retry → skip 累计）。
