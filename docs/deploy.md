@@ -25,14 +25,18 @@ GitHub Actions (美国)                       百度服务器 (北京)
 
 ## 初次部署
 
+> 本节为一次性迁移 / 全新服务器初始化指南，**已于 2026-08-16 全部执行完毕**（v1.0.0 上线）；日常操作见下方"日常发布"。勿无脑重跑 §1——下方 drop-in 是覆盖写，会抹掉服务器现有 `NO_PROXY` 中的 `baidubce.com` 项。
+
 ### 1. 服务器一次性配置
 
-dockerd 代理（拉取 ghcr.io 用）+ 下线旧本地 registry：
+dockerd 代理（拉取 ghcr.io 用）+ 下线旧本地 registry。
+
+本服务器现状（2026-08-15 已配）：`/etc/systemd/system/docker.service.d/http-proxy.conf` 已存在且生效，`NO_PROXY=localhost,127.0.0.1,baidubce.com`——代理部分**无需执行**；下方片段仅用于全新服务器：
 
 ```bash
 ssh deployer@182.61.1.77
 
-# dockerd 代理
+# dockerd 代理（仅全新服务器需要；本服务器已配置，勿覆盖）
 sudo mkdir -p /etc/systemd/system/docker.service.d
 sudo tee /etc/systemd/system/docker.service.d/proxy.conf > /dev/null <<'EOF'
 [Service]
@@ -43,7 +47,7 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl restart docker   # ⚠ 所有容器短暂中断，选低峰执行
 
-# 下线本地 registry（镜像分发已迁移 GHCR）
+# 下线本地 registry（镜像分发已迁移 GHCR；已执行）
 # git 走代理（服务器无法直连 GitHub）
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
@@ -72,7 +76,7 @@ GHCR 推送用 `GITHUB_TOKEN`（workflow 内置 `packages: write`），无需配
 ssh deployer@182.61.1.77 'cd ~/fin-trace && docker compose up -d'
 ```
 
-首次启动需在首个 release tag 推送且 package 设为 public 之后执行（此前 GHCR 上尚无 latest 镜像）；存量服务器迁移无需此步。
+首次启动需在首个 release tag 推送之后执行（此前 GHCR 上尚无 latest 镜像）；存量服务器迁移无需此步。
 
 ### 4. 获取 admin_token
 
@@ -92,7 +96,7 @@ git tag vX.Y.Z main && git push origin vX.Y.Z
 
 CI 自动完成：typecheck → 构建镜像推 GHCR → SSH 部署该 tag → 健康检查（重试 ~1 分钟）。
 
-**首次发布特殊步骤**（仅一次）：GHCR package 首次推送后默认 private，deploy job 的 `docker compose pull` 会失败。到 GitHub 个人页 → Packages → `fin-trace` → Package settings → Change visibility → **Public**，然后 re-run 失败的 deploy job。
+**package 可见性**：公开仓库经 Actions 推送的 GHCR package **自动 public**（2026-08-16 v1.0.0 首发实测），服务器匿名拉取，无需手动设置。仅当仓库转为私有后，才需在 GitHub UI 将 package 保持 public（或给服务器配置 ghcr 登录）。
 
 ## 回滚
 
@@ -144,9 +148,13 @@ ssh deployer@182.61.1.77 'tar czf - ~/fin-trace/data' > fin-trace-data-backup-$(
 
 pull 走 dockerd 代理（systemd drop-in）。失败时依次检查：`systemctl show docker --property=Environment`（代理是否生效）、`curl -x http://127.0.0.1:7890 -sI https://ghcr.io/v2/`（代理规则是否放行 GitHub CDN）。
 
+### 服务器 checkout 必须保持干净
+
+deploy 脚本的 `git pull origin main` 会因本地未提交修改而中止（2026-08-16 首次部署实际遇到：服务器上手工改过的 `docker-compose.yml` 阻塞 pull，报 `Your local changes ... would be overwritten by merge`）。服务器上的配置修改一律提交进仓库、随 release 下发；如遇此错，`git status` 确认改动已被仓库内容覆盖后 `git checkout -- <file>`，再 re-run 失败的 deploy job。
+
 ### 历史遗留：本地 Registry（已于 2026-08 下线）
 
-早期部署使用 `localhost:5000` 本地 registry + htpasswd 认证 + 服务器端构建（`--network host` + `BUILD_PROXY`）。迁移 GHCR 后相关复杂度全部移除；`registry-data/`、`registry-auth/` 目录在服务器上待清理。
+早期部署使用 `localhost:5000` 本地 registry + htpasswd 认证 + 服务器端构建（`--network host` + `BUILD_PROXY`）。迁移 GHCR 后相关复杂度全部移除；服务器上 `registry-data/`、`registry-auth/` 目录与 `docker-compose.yml.bak.20260815` 手改备份待清理。
 
 ### 历史遗留：凭据轮换
 

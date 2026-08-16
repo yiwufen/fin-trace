@@ -1,7 +1,7 @@
 # 基于镜像的 tag 触发部署 — 设计文档
 
 - 日期：2026-08-16
-- 状态：已批准（待实现）
+- 状态：已实施（PR #11，v1.0.0 于 2026-08-16 上线；见文末"实施结果"）
 - 分支：`chore/image-based-deploy`
 
 ## 背景与动机
@@ -112,3 +112,13 @@ GHCR 保留全部历史 tag 镜像。
 | compose 文件更新 | 随 release 的 `git pull` 同步 |
 | Actions 分钟配额 | public 仓库免费 |
 | 镜像公开 | 仓库代码本就公开；镜像不含密钥（config.json / data 均为 volume 挂载，.dockerignore 已排除） |
+
+## 实施结果（2026-08-16）
+
+PR #11 合入 main（merge commit `919d910`），`v1.0.0` 首发成功上线（容器 healthy、线上 200）。与原设计的偏差：
+
+1. **GHCR package 可见性**：原"一次性迁移步骤 §2"假设首推默认 private、需 UI 切 public——实测**公开仓库经 Actions 推送的 package 自动 public**，该步骤未执行。deploy.md 已按实测结论改写。
+2. **dockerd 代理**：服务器已于 2026-08-15 预先配置（`NO_PROXY` 额外含 `baidubce.com`），步骤 1 的代理部分未重复执行，`systemctl restart docker` 未发生；registry 下线（`docker rm -f fin-trace-registry`）照常执行。
+3. **首次 deploy 实际失败原因**：非镜像可见性，而是服务器 checkout 存在未提交的 `docker-compose.yml` 手改（2026-08-15 网络名手工修补），`git pull` 被阻。确认仓库已含等效修复（`f82baea`）后丢弃本地改动，re-run deploy 成功。已记入 deploy.md 踩坑记录。
+4. **tag 过滤器**：实现阶段由最终审查从 `v*.*.*` 收紧为 `v[0-9]+.[0-9]+.[0-9]+`（防预发布后缀误上生产）。
+5. **外部网络**：caddy/cloudflared 侧已改名 `repo_knowledge-net` → `knowledge-net`，compose 移除冗余 `name:` 行（`f82baea`）。
