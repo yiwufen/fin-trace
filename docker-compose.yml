@@ -31,4 +31,3 @@ services:
 networks:
   knowledge-net:
     external: true
-    name: repo_knowledge-net
