@@ -85,7 +85,7 @@ echo "<密码>" | docker login localhost:5000 -u fin-trace --password-stdin
 docker push localhost:5000/fin-trace:latest
 mv ~/.docker/config.json.bak ~/.docker/config.json 2>/dev/null || true
 
-docker compose pull && docker compose up -d --remove-orphans
+docker compose up -d --remove-orphans   # 用本机刚构建的镜像；不要 pull（本地 registry 需认证，且凭据不持久化）
 docker image prune -f
 ```
 
