@@ -1,6 +1,6 @@
 # 异常处理 — 四类恢复 + 预算阶梯 + FINALIZE 降级
 
-> 状态: 已实现（v3 五意图架构） | 已对齐: 33f02f7 (2026-08-16)
+> 状态: 已实现（v3 五意图架构 + v3.1 确定性/瞬态错误分流） | 已对齐: a2ce04d (2026-08-16)
 >
 > 源码: `src/agent/error-handler.ts`（格式修复/终止信号/循环检测/降级判定）、
 > `src/agent/loop.ts`（MCP 连接失败立即降级、压缩阶梯）。v3 删除了
@@ -26,8 +26,14 @@
 | 超时 | Retry（最多 1 次） |
 | 空结果 | **实体名变体重试**（见下），仍空 → Skip（标记实体"无数据"，不阻塞） |
 | 错误响应 | lookup/trace 失败 → Skip；expand 失败 → 标记 cluster "不可展开" |
+| 参数校验失败（映射层 `validateToolArgs`） | **本地拦截，不发请求**；错误信息注入 LLM 上下文自纠（time_range 双端 ISO 等） |
+| 服务端 `{"error": ...}` 载荷（isError=false 正常 content） | `extractErrorPayload` 识别 → `McpDeterministicError`：**不重试、不计 consecutiveErrors**；错误信息注入 LLM 上下文自纠 |
 | 连接失败（启动时） | **立即降级返回**：`mcp_degraded=true` + completion_reason=`mcp_unavailable`，不做探索（不再有"降级到 recall 工具"路径——温层已删除） |
 | 运行中连续失败 | `tool_call_failures` 计数，连续 ≥3 → `mcp_degraded=true` + reliability_note |
+
+确定性 vs 瞬态错误分流（v3.1）: 参数类错误（本地校验失败、服务端 error 载荷）
+是确定性的——重试必然同样失败，且不应计入降级计数（两次 LLM 传参失误
+不应废掉会话级 MCP 通道）；仅瞬态错误（超时/5xx/网络）走重试与降级链。
 
 ### 实体名变体重试（tryNameVariants）
 
