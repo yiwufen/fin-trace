@@ -1,27 +1,12 @@
 # 多阶段构建：构建阶段装依赖 + 编译 TS + 构建 web；运行阶段只含产物
 #
-# 构建由 CI 在服务器上执行：docker build --network host \
-#   --build-arg BUILD_PROXY=http://127.0.0.1:7890 ...
-# （服务器无法直连外网，构建容器共享宿主机网络访问代理；
-#   compose 中无 build 配置，统一走上面的 docker build。
-#   本地构建不设 BUILD_PROXY 即可。）
+# 构建在 GitHub Actions 中执行（runner 有外网，无需代理），推送 GHCR；
+# 服务器只 docker compose pull，不再本地构建。本地验证直接 docker build。
 
 # ─── 构建阶段 ───
 FROM node:20-slim AS builder
 
-ARG BUILD_PROXY=""
-
 WORKDIR /app
-
-# 构建期代理（npm/git 走宿主机 :7890）
-# 使用 host 网络时 127.0.0.1 即宿主机；不设 BUILD_PROXY 则跳过
-RUN if [ -n "$BUILD_PROXY" ]; then \
-      npm config set proxy "$BUILD_PROXY" \
-      && npm config set https-proxy "$BUILD_PROXY" \
-      && git config --global http.proxy "$BUILD_PROXY" 2>/dev/null || true \
-      && git config --global https.proxy "$BUILD_PROXY" 2>/dev/null || true; \
-      echo "proxy set: $BUILD_PROXY"; \
-    else echo "no build proxy"; fi
 
 # 先拷包描述以利用 docker 层缓存
 COPY package.json package-lock.json ./
