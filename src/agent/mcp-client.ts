@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { readConfig } from "./config.js";
-import { type ToolInput, mapToMcpCall } from "./tools.js";
+import { type ToolInput, mapToMcpCall, validateToolArgs } from "./tools.js";
 import type { ToolResult, McpToolName } from "./state.js";
 
 // ─── 常量 ───
@@ -14,6 +14,21 @@ const MCP_TIMEOUT_MS = 30_000;
 const RETRY_DELAY_L1 = 2_000; // L1: 首次重试 2s
 const RETRY_DELAY_L2 = 5_000; // L2: 二次重试 5s
 const MAX_CONSECUTIVE_ERRORS = 3;
+
+// ─── 服务端错误载荷识别 ───
+// KG 服务把参数校验等错误作为 {"error": "..."} 放在正常 content（isError=false）里返回；
+// 不识别的话错误会被当作数据喂给 LLM
+
+export function extractErrorPayload(data: unknown): string | null {
+  if (typeof data !== "object" || data === null) return null;
+  const error = (data as { error?: unknown }).error;
+  return typeof error === "string" ? error : null;
+}
+
+// 确定性错误（参数被服务端拒绝等）：重试必然同样失败，
+// 也不计入 consecutiveErrors（连续 3 次会触发 degraded 跳过后续所有调用，
+// 两次 LLM 传参失误不应废掉整个会话的 MCP 通道）
+class McpDeterministicError extends Error {}
 
 // ─── Client 状态（供 Agent Loop 读取降级标志）───
 
@@ -95,6 +110,12 @@ export class KgMcpClient {
       return { ...baseResult, success: false, data: null, error: "MCP service degraded — skipping call", total_count: 0 };
     }
 
+    // 映射层参数校验 —— 非法参数不发网络请求，错误信息反馈给 LLM 自纠
+    const argError = validateToolArgs(toolName, args);
+    if (argError) {
+      return { ...baseResult, success: false, data: null, error: argError, total_count: 0 };
+    }
+
     const mcpCall = mapToMcpCall(toolName, args);
 
     try {
@@ -107,10 +128,12 @@ export class KgMcpClient {
         total_count: 1,
       };
     } catch (err) {
-      this._state.consecutiveErrors++;
+      if (!(err instanceof McpDeterministicError)) {
+        this._state.consecutiveErrors++;
 
-      if (this._state.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        this._state.degraded = true;
+        if (this._state.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          this._state.degraded = true;
+        }
       }
 
       return {
@@ -129,8 +152,9 @@ export class KgMcpClient {
     // L1: 首次尝试
     try {
       return await this.executeMcpCall(mcpCall);
-    } catch {
-      // fall through to retry
+    } catch (err) {
+      // 确定性错误重试必然同样失败，直接抛出
+      if (err instanceof McpDeterministicError) throw err;
     }
 
     await this.sleep(RETRY_DELAY_L1);
@@ -164,7 +188,15 @@ export class KgMcpClient {
     }
 
     // 提取并解析内容
-    return this.extractContent(result.content);
+    const data = this.extractContent(result.content);
+
+    // 服务端 {"error": ...} 形态（isError=false 的正常 content）→ 确定性失败
+    const errorPayload = extractErrorPayload(data);
+    if (errorPayload !== null) {
+      throw new McpDeterministicError(`MCP tool error: ${errorPayload}`);
+    }
+
+    return data;
   }
 
   // ─── MCP content 解析 ───

@@ -1,6 +1,6 @@
 # Tools — 5 个 KG 工具
 
-> 状态: 已实现（v3 五意图架构） | 已对齐: 33f02f7 (2026-08-16)
+> 状态: 已实现（v3 五意图架构 + v3.1 KG 服务契约对齐） | 已对齐: a2ce04d (2026-08-16)
 >
 > 源码: `src/agent/tools.ts`。v3 删除了 v2 的 3 个 recall 内存读取工具
 > （recall_entity/recall_buffer/recall_finding）——温层已随五意图重构移除，
@@ -44,6 +44,24 @@ KG 是**实体-事件二部图**：实体不直连实体，一切关系经事件
   LLM 可见的 hops 参数固定为 2（schema default/min/max 均 2），映射层
   不接受 LLM 修改——深度控制是 Agent Loop 的职责
 - **timeline / scan 不传 hops**: 时序与事件筛选不涉及图扩展
+
+---
+
+## time_range 契约（v3.1）
+
+KG 服务端要求 `time_range` 为**双端 ISO 日期** `'YYYY-MM-DD:YYYY-MM-DD'`，
+不支持开放区间。映射层 `validateToolArgs` 在发请求前校验（非法直接返回
+失败 ToolResult，不发网络请求），错误信息注入 LLM 上下文供下一轮自纠。
+
+---
+
+## 服务端错误载荷（v3.1）
+
+KG 服务把参数校验类错误作为 `{"error": "..."}` 放在**正常 content**返回
+（`isError=false`）。`mcp-client.ts` 的 `extractErrorPayload` 识别该形态并转为
+`McpDeterministicError`——**不重试、不计入 consecutiveErrors**（确定性错误重试
+必然失败；两次传参失误不应触发 degraded 废掉会话级 MCP 通道）。瞬态错误
+（超时/5xx/网络）仍走 L1/L2/L3 重试与降级链（见 [error-handling.md](error-handling.md)）。
 
 ---
 
@@ -109,12 +127,24 @@ KG 是**实体-事件二部图**：实体不直连实体，一切关系经事件
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | entities | string[] | ✓ | 要检查的实体中文名列表 |
-| event_types | string[] | | 事件类型过滤（见下方枚举） |
-| time_range | string | | 可选 |
+| event_types | string[] | | 事件类型过滤（32 类闭集，见下方） |
+| time_range | string | | 可选，双端 ISO 必填 |
 
-可用事件类型: 政策制裁/出口管制、股市波动/市场异动、企业并购/重组、
-供应链中断/调整、财报发布/业绩预告、监管处罚/合规调查、关税调整/贸易协定、
-高管变动/人事调整、IPO/融资事件、地缘政治影响。
+**event_types 32 类闭集**（canonical 英文值或中文别名均可，服务端归一化；
+未知类型服务端报错并列出合法值）:
+
+| 分组 | canonical 值 |
+|------|--------------|
+| 公司资本类 | restructuring(重组/并购)、ipo(上市/增发)、shareholding_change(增减持/大宗交易)、equity_pledge(股权质押)、dividend(分红/派息)、company_establishment(企业设立)、investment(投资/融资) |
+| 公司经营类 | financial_performance(财报/业绩)、product_launch(产品发布)、business_strategy(企业战略)、executive_change(高管变动/实控人变动) |
+| 公司风险类 | debt_default(债务违约)、legal_proceeding(诉讼)、risk_warning(风险提示) |
+| 市场分析类 | stock_price_change(股价)、price_change(商品价格)、sector_performance(板块表现)、market_analysis(市场分析)、industry_analysis(行业分析)、rating_change(评级调整/目标价) |
+| 监管类 | regulatory_action(监管处罚)、sanction(制裁)、policy_announcement(政策发布) |
+| 宏观类 | economic_data(经济数据)、trade_data(贸易数据) |
+| 影响因素类 | diplomatic_event(外交)、military_action(军事)、political_statement(政治声明) |
+| 关系/披露类 | strategic_cooperation(战略合作/签约)、disclosure(澄清/回应/停牌)、meeting(会议)、non_financial(明确非金融内容) |
+
+枚举源码: `src/agent/tools.ts` 的 `EVENT_TYPES`（与服务端契约一致，单测锁定数量）。
 
 **MCP 映射**: `search_knowledge(entities, intent=EVENT_ANALYSIS, event_types, time_range)`（不传 hops/top_k，KG 服务端默认值兜底）
 

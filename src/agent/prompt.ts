@@ -88,9 +88,10 @@ const LAYER_2_TOOLS = `你有 5 个工具。所有工具查询知识图谱，不
 
 5. scan(entities, event_types, time_range?)
    语义: 批量筛选实体是否有某类事件
-   什么时候用: 需要验证一个假设——"这些实体中有多少被制裁过"、"有没有供应中断事件"
-   输入: entities (entity 名称数组)、event_types (事件类型数组，如 ["政策制裁/出口管制", "供应链中断/调整"])
-         time_range 格式 '2024-01-01:2024-12-31'（可选）
+   什么时候用: 需要验证一个假设——"这些实体中有多少被制裁过"、"有没有债务违约事件"
+   输入: entities (entity 名称数组)、event_types (事件类型数组，canonical 值如 ["sanction", "debt_default"]，
+         也接受中文别名，未知类型会报错——完整 32 类闭集见工具描述)
+         time_range 格式 '2024-01-01:2024-12-31'（可选，双端必填）
    返回: 匹配到的实体和事件摘要`;
 
 const LAYER_3A_STATE_FIELDS = `在每轮的 State View 中你会看到以下字段。理解它们的含义很重要：
