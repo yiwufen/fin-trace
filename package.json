@@ -28,7 +28,7 @@
     "financial-analysis"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "AGPL-3.0",
   "type": "module",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

@@ -1,5 +1,9 @@
 # 三层上下文架构 — 根本解决上下文膨胀
 
+> **⚠️ DEPRECATED（2026-06 起）**: v2 修正已移除温层与 `recall_*` 工具（见
+> [archive/graph-agent-v2-changelog-2026-06-02.md](archive/graph-agent-v2-changelog-2026-06-02.md)）。
+> 本文保留作为设计演进记录；现行实现以 `src/agent/`（context.ts / state.ts）为准。
+
 ---
 
 ## 问题根因

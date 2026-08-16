@@ -1,5 +1,7 @@
 # A2A (Agent-to-Agent) 协议分析
 
+> **历史文档**（早期 A2A 选型分析，2026-08 归档）。现行对外契约见 [../agent-card.md](../agent-card.md) 与 `src/a2a/`。
+
 ## 从第一性原理出发：为什么需要 A2A
 
 LLM 时代的 Agent 交互存在一个根本矛盾：

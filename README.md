@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/node-%E2%89%A5%2018-brightgreen" alt="Node.js ≥ 18">
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen" alt="Node.js ≥ 20">
   <img src="https://img.shields.io/badge/license-AGPL%20v3-blue" alt="License: AGPL v3">
   <img src="https://img.shields.io/badge/status-active-success" alt="Status: Active">
 </p>
 
 <h1 align="center">Graph Explorer</h1>
 <h3 align="center">金融知识图谱上的多跳推理 Agent</h3>
-<p align="center">独立 A2A Agent &nbsp;·&nbsp; 自主探索 &nbsp;·&nbsp; 每一步都有 KU ID 可查证</p>
+<p align="center">Web 应用 · A2A Agent · MCP 服务 &nbsp;·&nbsp; 自主探索 &nbsp;·&nbsp; 每一步都有 KU ID 可查证</p>
 
 ---
 
@@ -31,7 +31,22 @@
 
 > 🔗 https://fin.182-61-1-77.nip.io/s/6ivLlHN0i-ivP-NBO8ZB2kpb
 
-限量 10 次使用。
+限量 10 次使用（分享令牌，见下方[产品形态](#产品形态)）。
+
+---
+
+## 产品形态
+
+Graph Explorer 以一个进程（:3001）同时提供四种接口：
+
+| 接口 | 说明 |
+|------|------|
+| **Web 应用** | 聊天式调查界面：邀请码注册、多会话管理、管理后台（`/admin`，用户/邀请码/分享令牌/设置）、分享链接（`/s/:token`，可限次）、公开 Landing page、移动端 PWA |
+| **A2A Agent** | `graph_explore` skill，Agent Card 见 `/.well-known/agent-card.json`，供 Host Agent（如 OpenClaw）异步调用 |
+| **MCP 服务** | `/mcp` 暴露 `graph_explore_start/status/cancel`（异步提交 + 轮询） |
+| **HTTP API** | `/api/*`，驱动 Web 前端（认证、会话、管理、分享、设置） |
+
+本文档其余部分聚焦核心：多跳探索 Agent 本身。
 
 ---
 
@@ -121,9 +136,11 @@
 ```bash
 git clone <repo-url> && cd fin-trace
 
-cp config.example.json config.json   # 填入 API key 和知识图谱地址
-npm install && npm run dev           # 启动，监听 :3001
+cp config.example.json config.json   # 填入 LLM API key（首次启动也会自动生成）
+npm install && npm run dev           # 构建前端并启动，监听 :3001
 ```
+
+启动后浏览器访问 `http://localhost:3001` 即为 Web 应用（聊天界面；管理后台在 `/admin`）。
 
 **A2A 集成**（推荐）
 
@@ -220,8 +237,8 @@ sessions_yield(wait_for=[session.id])
 │    会扩展、会回退、会换方向         pattern_violation · absence         │
 │                                                                     │
 │   ⚉ 事件脉络构建              ⚉ 生产级容错                             │
-│    散落事件 → 因果故事线        三级降级 · 格式修复 · 收敛检测             │
-│    每段关系附带推理说明          128k 预算分池 · 4级压缩                  │
+│    散落事件 → 因果故事线        多级降级 · 格式修复 · 收敛检测             │
+│    每段关系附带推理说明          Token 预算分池（config 驱动）· 多级压缩     │
 │                                                                     │
 │            ⚉ 不保证零幻觉，但保证可验证 ← 每条 finding 都有 KU ID        │
 │                                                                     │
@@ -244,24 +261,26 @@ sessions_yield(wait_for=[session.id])
 
 ### 容错
 
-MCP 三级降级 → LLM 格式自修复 → 连续 4 次相同决策自动切换策略 → 4 级压缩升级。一次查询失败不会中断整个调查。
+MCP 多级降级 → LLM 格式自修复 → 连续相同决策自动切换策略 → 多级压缩升级。一次查询失败不会中断整个调查。
 
 ---
 
 ## 架构
 
 ```
-                    ┌────────────────────────────┐
-                    │   上游 LLM（OpenClaw 等 A2A 客户端）│
-                    │   a2a_send_task(target="fin-trace")   │
-                    │   a2a_task_status(taskId)             │
-                    └────────────┬───────────────┘
-                                 │
-                                 ▼
+  浏览器（Web 应用）        上游 LLM（OpenClaw 等 A2A 客户端）    MCP 客户端
+  /api/* · 静态资源 · SSE     a2a_send_task(target="fin-trace")     /mcp
+  认证 · 会话 · 管理后台       a2a_task_status(taskId)               graph_explore_start/status/cancel
+        │                          │                                  │
+        └────────────┬─────────────┴──────────────────────────────────┘
+                     ▼
            ┌─────────────────────────────────────────┐
            │       Graph Explorer（:3001）            │
            │                                         │
            │   ┌─────────────────────────────────┐  │
+           │   │       Chat Loop（对话循环）       │  │
+           │   │  多轮对话 → 调用探索 / 直接回复     │  │
+           │   │       ↓ graph_explore            │  │
            │   │       Agent Loop                │  │
            │   │                                 │  │
            │   │  EXPLORING                      │  │
@@ -291,7 +310,7 @@ MCP 三级降级 → LLM 格式自修复 → 连续 4 次相同决策自动切�
            └─────────────────────────────────────────┘
 ```
 
-**Graph Explorer 本身就是一个 A2A Agent**——上游 Agent 通过 A2A task lifecycle 调用它。区别在于它不是一次查询，而是一个完整的自主探索循环，必须用异步方式调用。
+**对外三种方式接入**——浏览器直接用 Web 应用，Host Agent 走 A2A task lifecycle，MCP 客户端走 `/mcp` 异步工具。区别在于它不是一次查询，而是一个完整的自主探索循环，必须用异步方式调用。
 
 ### 设计原则
 
@@ -309,32 +328,32 @@ MCP 三级降级 → LLM 格式自修复 → 连续 4 次相同决策自动切�
 
 ```
 src/
-├── index.ts              # A2A Agent Server 入口
-├── api.ts                # HTTP API
-├── a2a/
-│   ├── agent-card.ts     # Agent Card 定义
-│   ├── handler.ts        # JSON-RPC 路由
-│   ├── task-store.ts     # Task 存储
-│   ├── sse.ts            # SSE 流式推送
-│   └── types.ts          # A2A 类型定义
-├── agent/
-│   ├── loop.ts           # Agent Loop（EXPLORING → FINALIZE）
-│   ├── state.ts          # 状态定义 & 序列化
-│   ├── prompt.ts         # System Prompt 构建
-│   ├── tools.ts          # 5 个 KG 工具定义（内部 MCP）
-│   ├── mcp-client.ts     # KG MCP 客户端
-│   ├── findings.ts       # Finding 提取 · 去重 · confidence
-│   ├── threads.ts        # Event Thread 构建 & 验证
-│   ├── context.ts        # 上下文组装 & Token 预算
-│   ├── error-handler.ts  # 容错 & 降级
-│   └── config.ts         # 配置加载
-├── llm/
-│   ├── client.ts         # LLM 客户端抽象
-│   ├── openai.ts         # OpenAI-compatible 实现
-│   └── types.ts
-├── chat/                 # 对话循环
+├── index.ts              # 服务入口：HTTP + A2A + MCP + 静态托管
+├── api.ts                # HTTP API（/api/*：认证、会话、管理、分享、设置）
+├── mcp-server.ts         # 出站 MCP 服务（/mcp：graph_explore_start/status/cancel）
+├── account-handler.ts    # 账户注册（邀请码）
+├── user-store.ts         # 用户存储（data/users.json）
+├── auth/                 # 密码哈希 · 会话 · Cookie
+├── settings-store.ts     # data/settings.json（admin_token、邀请码、密钥覆盖）
+├── share-store.ts        # 分享令牌（/s/:token）
 ├── session-store.ts      # 会话持久化
+├── static-files.ts       # web/dist/ 静态托管
+├── logger.ts
+├── a2a/                  # A2A 协议：agent-card · JSON-RPC 路由 · Task 存储 · SSE
+├── agent/                # 核心：Agent Loop（EXPLORING → FINALIZE）
+│   ├── loop.ts / state.ts / prompt.ts
+│   ├── tools.ts          # 5 个 KG 工具（内部 MCP）
+│   ├── mcp-client.ts / findings.ts / threads.ts
+│   └── context.ts / error-handler.ts / config.ts
+├── chat/                 # 对话循环（多轮对话，调用 agent）
+├── llm/                  # LLM 客户端（OpenAI-compatible）
 └── tool-categories.ts
+web/                      # 前端 workspace（Vite + React + Tailwind，PWA）
+eval/                     # Golden set 评测框架（run | judge | report）
+tests/e2e/                # 冒烟场景（捕获输出）
+design-docs/              # 核心设计文档
+docs/                     # 部署指南 + 历史 spec/plan
+skills/                   # 跨平台 skill 定义（fin-trace.md）
 ```
 
 ---

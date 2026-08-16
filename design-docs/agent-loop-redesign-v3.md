@@ -1,7 +1,7 @@
 # Graph Explorer Agent Loop Redesign v3
 
 > 日期: 2026-06-04
-> 状态: 设计讨论
+> 状态: **部分实现**（2026-08 注）— 对话外循环已上线（`src/chat/`），内层探索循环已按"五意图重构"实现（`src/agent/`，无温层/recall 工具）。**未实现**：§4.1 neodata 双数据源路由（当前仅注册 `graph_explore` 单工具）、§4.4 对话历史压缩 P5、§7 模块布局（实际为 `src/agent` + `src/chat` + `src/a2a`）
 > 触发: 从"单次任务执行器"升级为"多轮对话 Agent"
 > 参考: Claude Code query.ts / OpenClaw embedded-runner / Codex turn.rs
 
