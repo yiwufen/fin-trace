@@ -629,3 +629,12 @@ git commit -m "docs: rewrite deployment guide for image-based deploys"
 4. deploy job 首次会因 package private 而失败 → GitHub UI 将 package `fin-trace` 切为 **Public** → re-run deploy job
 5. 验证：`ssh deployer@182.61.1.77 'cat ~/fin-trace/.env'`（应显示 `IMAGE_TAG=v1.0.0`）+ 线上 `/` 可访问
 6. 回归：确认聊天/登录/分享功能正常（容器已换镜像源）
+
+## 实际执行结果（2026-08-16）
+
+经 PR #11 合入 main，`v1.0.0` 于当日上线（容器 healthy、线上 200）。与上方 runbook 的差异：
+
+- 步骤 1 的代理配置：服务器 2026-08-15 已预先配好（含 `NO_PROXY` 的 `baidubce.com` 项），未重跑；仅执行 registry 下线
+- 步骤 4 未发生：公开仓库经 Actions 推送的 package 自动 public，无失败无切换
+- 实际首次失败点：服务器 checkout 的 `docker-compose.yml` 有未提交手改（网络名修补），`git pull` 被阻；确认 `f82baea` 已含等效修复后 `git checkout --` 清理，re-run deploy 成功
+- tag 过滤器在实现阶段收紧为 `v[0-9]+.[0-9]+.[0-9]+`（最终审查发现 `v*.*.*` 会匹配 `v1.2.3-rc1`）

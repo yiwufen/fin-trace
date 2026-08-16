@@ -81,7 +81,8 @@ push main / PR ─→ CI 仅验证（typecheck + docker build）
 
 - **build once, deploy many** — 镜像只在 GitHub Actions 构建，服务器不构建；服务器 `git pull` 仅同步 compose/脚本
 - **tag 打在 main 提交上** — 部署时服务器 `git pull origin main`，tag 指向非 main 提交会导致 compose 与镜像不一致
-- **服务器无法直连外网** — dockerd 走代理 `127.0.0.1:7890` 拉取 ghcr.io（systemd drop-in，一次性配置）；重启 docker 会中断所有容器
+- **服务器无法直连外网** — dockerd 走代理 `127.0.0.1:7890` 拉取 ghcr.io（systemd drop-in，已配置）；重启 docker 会中断所有容器
+- **服务器 checkout 保持干净** — deploy 的 `git pull` 会被未提交的本地修改阻塞；配置修改一律提交进仓库、随 release 下发，不在服务器上手改
 - **GHCR package 为 public** — 服务器匿名拉取，无服务器侧凭据；镜像不含密钥（config/data 均为 volume 挂载，`.dockerignore` 排除）
 - **回滚 = 重部署旧 tag** — `echo "IMAGE_TAG=<旧版>" > .env && docker compose pull && docker compose up -d`
 - **旧 Registry 数据目录不可 `--delete` 同步** — `registry-data/`、`registry-auth/` 需排除（本地 registry 已于 2026-08 下线，目录待清理）
