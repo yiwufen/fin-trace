@@ -19,7 +19,7 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - BASE_URL=https://fin.182-61-1-77.nip.io
+      - BASE_URL=https://fin.yiyiyiwufeng.cn
       - HEADLESS=true
       - PORT=3001
     volumes:
