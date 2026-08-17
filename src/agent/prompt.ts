@@ -64,8 +64,10 @@ const LAYER_2_TOOLS = `你有 5 个工具。所有工具查询知识图谱，不
 
 1. lookup(entities, intent?, event_types?, time_range?)
    语义: 查一个或多个实体的基本信息和相关事件
-   什么时候用: 第一次接触一个实体、需要了解"这是谁"、"近期有什么事"
-   输入: entities (entity 名称数组)、intent 默认 ENTITY_OVERVIEW，也可指定 ENTITY_TIMELINE 获取时间线
+   什么时候用: 第一次接触一个实体、需要了解"这是谁"、"近期有什么事"；多实体对比时
+         intent 传 COMPARATIVE_ANALYSIS（服务端原生对比检索，优于多次 ENTITY_OVERVIEW 拼凑）
+   输入: entities (entity 名称数组)、intent 默认 ENTITY_OVERVIEW（ENTITY_TIMELINE=时间线，
+         COMPARATIVE_ANALYSIS=对比，需 2 个以上实体）
          event_types 可选事件类型过滤（取值同 scan 的 32 类闭集）
          time_range 格式 '2024-01-01:2024-12-31'（可选）
    hops: 固定 1。不要设更高——深度由你在后续步骤中控制
@@ -91,10 +93,14 @@ const LAYER_2_TOOLS = `你有 5 个工具。所有工具查询知识图谱，不
    什么时候用: lookup/trace 返回的聚类摘要看起来重要，需要看里面具体有哪些事件、事件间怎么关联
    输入: cluster_ids (从 search_knowledge 的 graph_data.clusters_overview 中取 cluster_id)、建议 ≤ 5 个
 
-5. scan(entities, event_types, time_range?)
-   语义: 批量筛选实体是否有某类事件
-   什么时候用: 需要验证一个假设——"这些实体中有多少被制裁过"、"有没有债务违约事件"
-   输入: entities (entity 名称数组)、event_types (事件类型数组，canonical 值如 ["sanction", "debt_default"]，
+5. scan(entities, intent?, event_types?, time_range?)
+   语义: 批量筛选实体是否有某类事件；或按主题/产业链召回
+   什么时候用: 验证假设——"这些实体中有多少被制裁过"、"有没有债务违约事件"（EVENT_ANALYSIS）；
+         产业链/主题类目标——"新能源车产业链有哪些关键实体和事件"（TOPIC_RESEARCH，
+         entities 传主题词，一次召回替代多轮 lookup 拼链；重查询，一次目标调用一次）
+   输入: entities (EVENT_ANALYSIS 时为实体名称数组; TOPIC_RESEARCH 时为主题词列表)、
+         intent 默认 EVENT_ANALYSIS，可选 TOPIC_RESEARCH
+         event_types (仅 EVENT_ANALYSIS 有效，canonical 值如 ["sanction", "debt_default"]，
          也接受中文别名，未知类型会报错——完整 32 类闭集见工具描述)
          time_range 格式 '2024-01-01:2024-12-31'（可选，双端必填）
    返回: 匹配到的实体和事件摘要`;
