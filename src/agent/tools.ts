@@ -18,6 +18,7 @@ export interface LookupInput {
   intent?: "ENTITY_OVERVIEW" | "ENTITY_TIMELINE";
   time_range?: string;
   top_k?: number;
+  event_types?: string[];
 }
 
 export interface TraceInput {
@@ -25,12 +26,14 @@ export interface TraceInput {
   entity_b: string;
   hops?: number;
   time_range?: string;
+  event_types?: string[];
 }
 
 export interface TimelineInput {
   entity: string;
   time_range?: string;
   top_k?: number;
+  event_types?: string[];
 }
 
 export interface ExpandInput {
@@ -138,7 +141,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 - 同时查多个实体对比: lookup(["宁德时代", "比亚迪"])
 - 获取时间线: lookup(["宁德时代"], intent="ENTITY_TIMELINE")
 
-想深入了解某个 cluster → 记下 cluster_id → 下一步用 expand 展开`,
+想深入了解某个 cluster → 记下 cluster_id → 下一步用 expand 展开
+
+event_types 过滤指引: 首轮摸底/陌生实体不要过滤（先看全貌）；
+定向子目标（制裁暴露、债务风险、监管动态等）带 event_types 过滤——
+热点实体不带过滤的返回很大且慢，过滤可数十倍缩减。取值见 scan 工具的 32 类闭集`,
     inputSchema: {
       type: "object",
       properties: {
@@ -152,6 +159,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           enum: ["ENTITY_OVERVIEW", "ENTITY_TIMELINE"],
           default: "ENTITY_OVERVIEW",
           description: "ENTITY_OVERVIEW=综合概览, ENTITY_TIMELINE=时间线",
+        },
+        event_types: {
+          type: "array",
+          items: { type: "string" },
+          description: "可选事件类型过滤（定向子目标用），取值同 scan 工具的 32 类闭集，也接受中文别名",
         },
         time_range: {
           type: "string",
@@ -198,6 +210,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "固定为 2——KG 为实体-事件二部图，1 语义跳（实体→事件→实体）= 2 条边；映射层固定传 2，深度控制由 Agent Loop 组合调用实现",
         },
+        event_types: {
+          type: "array",
+          items: { type: "string" },
+          description: "可选事件类型过滤（只追某类事件关联时用），取值同 scan 工具的 32 类闭集",
+        },
         time_range: {
           type: "string",
           description: "可选，格式 '2024-01-01:2024-12-31'（双端必填，不支持开放区间）",
@@ -230,6 +247,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         top_k: {
           type: "integer",
           default: 20,
+        },
+        event_types: {
+          type: "array",
+          items: { type: "string" },
+          description: "可选事件类型过滤（只看某类事件脉络时用），取值同 scan 工具的 32 类闭集",
         },
       },
       required: ["entity"],
@@ -323,6 +345,7 @@ export function mapToMcpCall(toolName: McpToolName, args: ToolInput): McpCall {
           hops: 1,
           time_range: a.time_range,
           top_k: a.top_k,
+          event_types: a.event_types,
         },
       };
     }
@@ -336,6 +359,7 @@ export function mapToMcpCall(toolName: McpToolName, args: ToolInput): McpCall {
           target_entity: a.entity_b,
           hops: 2,
           time_range: a.time_range,
+          event_types: a.event_types,
         },
       };
     }
@@ -348,6 +372,7 @@ export function mapToMcpCall(toolName: McpToolName, args: ToolInput): McpCall {
           intent: "ENTITY_TIMELINE",
           time_range: a.time_range,
           top_k: a.top_k,
+          event_types: a.event_types,
         },
       };
     }

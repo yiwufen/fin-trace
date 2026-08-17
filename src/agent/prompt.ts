@@ -62,23 +62,28 @@ function buildTimeContextText(tc?: TemporalContext): string {
 
 const LAYER_2_TOOLS = `你有 5 个工具。所有工具查询知识图谱，不是外部搜索。如果目标信息中指定了时间范围，在所有支持 time_range 的工具调用中都必须带上该参数。
 
-1. lookup(entities, intent?, time_range?)
+1. lookup(entities, intent?, event_types?, time_range?)
    语义: 查一个或多个实体的基本信息和相关事件
    什么时候用: 第一次接触一个实体、需要了解"这是谁"、"近期有什么事"
    输入: entities (entity 名称数组)、intent 默认 ENTITY_OVERVIEW，也可指定 ENTITY_TIMELINE 获取时间线
+         event_types 可选事件类型过滤（取值同 scan 的 32 类闭集）
          time_range 格式 '2024-01-01:2024-12-31'（可选）
    hops: 固定 1。不要设更高——深度由你在后续步骤中控制
+   过滤指引: 首轮摸底/陌生实体不要过滤（先看全貌）；定向子目标（制裁暴露、债务风险、
+   监管动态等）带 event_types 过滤——热点实体不过滤时返回很大且慢，过滤可数十倍缩减
 
-2. trace(entity_a, entity_b, hops?)
+2. trace(entity_a, entity_b, event_types?, time_range?)
    语义: 追踪两个实体间的关系路径
    什么时候用: 想知道"A 和 B 怎么关联的"、"中间经过哪些实体和事件"
-   输入: entity_a, entity_b (中文名称)、hops 默认 2
+   输入: entity_a, entity_b (中文名称)、event_types 可选（只追某类事件关联时）
+   hops: 固定 2
    限制: 一次只追一对实体。需要追多对就多次调用
 
-3. timeline(entity, time_range?)
+3. timeline(entity, event_types?, time_range?)
    语义: 拉取一个实体的事件时间线
    什么时候用: 发现一个实体有多个事件，需要按时间排列、找发展脉络
-   输入: entity (中文名称)、time_range 格式 '2024-01-01:2024-12-31'（可选）
+   输入: entity (中文名称)、event_types 可选（只看某类事件脉络时，取值同 scan）
+         time_range 格式 '2024-01-01:2024-12-31'（可选）
    返回: 按时间排列的事件列表
 
 4. expand(cluster_ids)

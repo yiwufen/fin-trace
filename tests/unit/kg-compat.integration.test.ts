@@ -38,6 +38,7 @@ const { clearConfigCache } = await import("../../src/agent/config.js");
 // ─── 假 KG 服务：复刻真实服务的关键行为 ───
 
 let searchCallCount = 0; // 服务端实际收到的 search_knowledge 调用数
+let lastReceivedArgs: Record<string, unknown> | null = null; // 最近一次调用参数（验证透传）
 
 const fakeServer = new McpServer({ name: "kg-fake", version: "0.0.0" });
 fakeServer.registerTool(
@@ -49,6 +50,7 @@ fakeServer.registerTool(
   async (args) => {
     searchCallCount++;
     const record = args as Record<string, unknown>;
+    lastReceivedArgs = record;
     const types = record.event_types as string[] | undefined;
 
     // 复刻真实服务：参数校验失败以 {"error": ...} 挂在正常 content（isError=false）
@@ -159,6 +161,13 @@ await test("lookup 合法调用无回归", async () => {
   assert.equal(r.success, true);
   const data = r.data as { knowledge_units?: unknown[] };
   assert.ok((data.knowledge_units?.length ?? 0) > 0);
+});
+
+await test("lookup 传 event_types 时服务端收到透传参数", async () => {
+  await client.callTool("lookup", {
+    entities: ["宁德时代"], event_types: ["sanction"],
+  } as never);
+  assert.deepEqual(lastReceivedArgs?.event_types, ["sanction"]);
 });
 
 await client.close();
