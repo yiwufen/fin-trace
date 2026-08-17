@@ -1,6 +1,6 @@
 # Tools — 5 个 KG 工具
 
-> 状态: 已实现（v3 五意图架构 + v3.1 KG 服务契约对齐） | 已对齐: a2ce04d (2026-08-16)
+> 状态: 已实现（v3 五意图架构 + v3.1 KG 服务契约对齐 + v3.2 event_types 定向过滤） | 已对齐: 3392100 (2026-08-16)
 >
 > 源码: `src/agent/tools.ts`。v3 删除了 v2 的 3 个 recall 内存读取工具
 > （recall_entity/recall_buffer/recall_finding）——温层已随五意图重构移除，
@@ -65,6 +65,21 @@ KG 服务把参数校验类错误作为 `{"error": "..."}` 放在**正常 conten
 
 ---
 
+## event_types 定向过滤（v3.2）
+
+服务端支持在**任意 intent** 上叠加 `event_types` 过滤（32 类闭集同 scan）。
+映射层对 lookup / trace / timeline 透传该参数，LLM 按以下指引使用:
+
+- **首轮摸底 / 陌生实体不过滤**——先看全貌，避免过早收窄
+- **定向子目标带过滤**——制裁暴露、债务风险、监管动态等场景
+  传 `['sanction','regulatory_action']` 一类窄集
+
+实测动机（宁德时代 hops=1）: 无过滤 ~112k tok 响应 / 137 聚类 / 延迟 21-55s
+（间歇性击穿 MCP 30s 超时）；加风险类过滤后 ~4.7k tok / 1 聚类 / 7-23s。
+过滤同时命中 token、延迟、针对性三个瓶颈，也是热点实体超时的主要缓解手段。
+
+---
+
 ## 逐工具参数（LLM 可见 schema）
 
 ### 1. lookup — 查实体信息和事件
@@ -76,10 +91,11 @@ KG 服务把参数校验类错误作为 `{"error": "..."}` 放在**正常 conten
 |------|------|------|------|------|
 | entities | string[] | ✓ | | 实体中文名列表，如 `['宁德时代', '比亚迪']` |
 | intent | enum | | ENTITY_OVERVIEW | ENTITY_OVERVIEW=综合概览 / ENTITY_TIMELINE=时间线 |
-| time_range | string | | | 如 `'2024-01-01:2024-12-31'` |
+| event_types | string[] | | | 定向子目标过滤（见"event_types 定向过滤"） |
+| time_range | string | | | 如 `'2024-01-01:2024-12-31'`（双端必填） |
 | top_k | int | | 20 | 1-100 |
 
-**MCP 映射**: `search_knowledge(entities, intent, hops=1, time_range, top_k)`
+**MCP 映射**: `search_knowledge(entities, intent, hops=1, event_types, time_range, top_k)`
 
 ### 2. trace — 追踪两实体间关系路径
 
@@ -91,9 +107,10 @@ KG 服务把参数校验类错误作为 `{"error": "..."}` 放在**正常 conten
 |------|------|------|------|
 | entity_a / entity_b | string | ✓ | 一对实体的中文名 |
 | hops | int | | 固定 2（见二部图换算；映射层收口，LLM 不可调） |
-| time_range | string | | 可选 |
+| event_types | string[] | | 只追某类事件关联时过滤 |
+| time_range | string | | 可选（双端必填） |
 
-**MCP 映射**: `search_knowledge(entities=[entity_a], target_entity=entity_b, intent=RELATIONSHIP_QUERY, hops=2, time_range)`
+**MCP 映射**: `search_knowledge(entities=[entity_a], target_entity=entity_b, intent=RELATIONSHIP_QUERY, hops=2, event_types, time_range)`
 
 ### 3. timeline — 拉取实体事件时间线
 
@@ -103,10 +120,11 @@ KG 服务把参数校验类错误作为 `{"error": "..."}` 放在**正常 conten
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |------|------|------|------|------|
 | entity | string | ✓ | | 单实体中文名 |
-| time_range | string | | | 如 `'2024-01-01:2024-12-31'` |
+| event_types | string[] | | | 只看某类事件脉络时过滤 |
+| time_range | string | | | 如 `'2024-01-01:2024-12-31'`（双端必填） |
 | top_k | int | | 20 | |
 
-**MCP 映射**: `search_knowledge(entities=[entity], intent=ENTITY_TIMELINE, time_range, top_k)`（不传 hops）
+**MCP 映射**: `search_knowledge(entities=[entity], intent=ENTITY_TIMELINE, event_types, time_range, top_k)`（不传 hops）
 
 ### 4. expand — 展开事件聚类详情
 
