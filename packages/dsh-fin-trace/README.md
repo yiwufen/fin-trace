@@ -127,3 +127,9 @@ cancel 真正接线 AbortSignal（服务器版 MCP 的 cancel 仅翻转状态位
 ## License
 
 AGPL-3.0（与 fin-trace 主仓库一致）
+
+## 发布（维护者）
+
+发布走主仓库 CI：push tag `plugin-vX.Y.Z`（与 package.json 版本一致、打在 main 提交上）触发
+`plugin-release.yml`，以 `NPM_TOKEN` + npm provenance 发布；**不支持本地 `npm publish`**（账号
+2FA）。发布前的 npm 安装路径真机验证纪律与守卫细节见 [docs/plugin-release.md](../../docs/plugin-release.md)。

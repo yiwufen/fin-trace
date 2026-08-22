@@ -60,7 +60,7 @@ No unit test runner is configured. Verification tooling:
 - `eval/` — golden-set evaluation framework
 - `tests/e2e/` — e2e smoke scenarios
 - `skills/` — cross-platform skill definitions (e.g. `fin-trace.md`)
-- `docs/` — deployment guide (`deploy.md`), ops runbook, historical specs/plans (`docs/superpowers/`)
+- `docs/` — deployment guide (`deploy.md`), dsh plugin release guide (`plugin-release.md`), ops runbook, historical specs/plans (`docs/superpowers/`)
 - `.github/workflows/` — CI/CD pipeline
 
 ## Deployment Architecture
@@ -91,6 +91,17 @@ push main / PR ─→ CI 仅验证（typecheck + docker build）
 - 完整部署文档：`docs/deploy.md`
 - `config.json` — runtime configuration (gitignored; see `config.example.json`，首次启动会自动生成)
 - `data/` — runtime data: sessions, `settings.json`（含 admin_token/invite_codes）, `users.json`, share tokens (gitignored)
+
+### dsh 插件发布约束（plugin-release lane）
+
+`packages/dsh-fin-trace/`（npm 包 `@lihangcz/dsh-fin-trace`）有独立的发布 lane，与服务器部署互不触发：
+
+- **发布 = push tag `plugin-vX.Y.Z`**（触发 `plugin-release.yml`：版本一致性 + 路径相关性两道守卫 → `npm publish --provenance`）。**绝不本地 `npm publish`**——账号启用 2FA，本地 token 一律 403，CI 是唯一发布通道
+- **tag 打在 main 提交上，且与 `packages/dsh-fin-trace/package.json` 的 version 严格一致**（守卫会拒绝不一致）
+- **验证 lane**：插件相关路径的 PR/main push 触发 `plugin-verify.yml`（root typecheck + 插件 typecheck/build/dry-run）。路径集唯一权威源是 `.github/plugin-paths.txt`，与 `plugin-verify.yml` 内联的两份 paths 列表必须三处同步
+- **link 验证通过 ≠ npm 安装可用**（0.1.2 前车之鉴）——发布前必须 `npm pack` 后在真实 profile 以 npm/tarball 安装真机验证（插件激活、工具+job 链路、web 下发 `/plugins/<pkg>/client.js` 200 且 boot 图含本包行）
+- **宿主版本锚定 dsh `0.1.1-rc.2`**：`@deepseek-ai/*` devDeps 固定 exact 并全部打进 dist、不进 dependencies（防止 profile 内双实例分裂 symbol）；宿主升级需重新对齐并回归
+- 完整发布文档：`docs/plugin-release.md`
 
 ## Design Document Index
 
