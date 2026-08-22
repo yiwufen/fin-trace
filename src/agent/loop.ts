@@ -52,8 +52,8 @@ import {
   type ToolCallCandidate,
 } from "./error-handler.js";
 import { validateThreads } from "./threads.js";
-import { readConfig, getApiKey } from "./config.js";
-import { createLlmClient } from "../llm/client.js";
+import { readConfig, type LlmConfig } from "./config.js";
+import { createLlmClient, type LlmClient } from "../llm/client.js";
 import type { MessageParam } from "../llm/types.js";
 import { categorize } from "../tool-categories.js";
 import { createLogger } from "../logger.js";
@@ -137,12 +137,15 @@ function computeTemporalContext(): TemporalContext {
 
 // ─── 状态初始化 ───
 
-export function initState(input: ExplorationInput): ExplorationState {
-  // 探索 token 预算的优先级：调用方显式传 > config.json 配置 > 128k 硬兜底
+export function initState(
+  input: ExplorationInput,
+  llmConfig?: Pick<LlmConfig, "model" | "max_tokens">,
+): ExplorationState {
+  // 探索 token 预算的优先级：调用方显式传 > 注入配置 > config.json 配置 > 128k 硬兜底
   // 之前是 `input.max_tokens ?? 128_000`，但 3 个调用方（A2A handler、chat loop、
   // eval runner）都不传 input.max_tokens，导致 config.json 的 llm.max_tokens 对
   // 探索预算完全无效——只控制单次 LLM 调用上限（loop.ts:1089）。
-  const total = input.max_tokens ?? readConfig().llm.max_tokens ?? 128_000;
+  const total = input.max_tokens ?? llmConfig?.max_tokens ?? readConfig().llm.max_tokens ?? 128_000;
   return {
     visited: new Map(),
     frontier: input.seed_entities.map((e) => ({
@@ -369,7 +372,11 @@ interface ClassifyInputItem {
   description: string;
 }
 
-async function classifyBatchEvents(state: ExplorationState): Promise<void> {
+async function classifyBatchEvents(
+  state: ExplorationState,
+  llm: LlmClient,
+  model: string,
+): Promise<void> {
   const unclassified = state.raw_event_archive.filter(
     (e) => e.event_data_type === "unknown",
   );
@@ -385,9 +392,8 @@ async function classifyBatchEvents(state: ExplorationState): Promise<void> {
   log.info({ count: input.length }, "开始批量分类事件");
 
   try {
-    const llm = createLlmClient();
     const response = await llm.messages.create({
-      model: readConfig().llm.model,
+      model,
       max_tokens: 500,
       system: CLASSIFY_PROMPT,
       messages: [{ role: "user", content: JSON.stringify(input) }],
@@ -984,18 +990,31 @@ export interface ExplorationResult {
   state: ExplorationState;
 }
 
+// ─── 依赖注入（嵌入式宿主，如 dsh 插件）───
+// 不传时与文件配置路径（config.json）行为完全一致。
+export interface ExplorationDeps {
+  /** 注入的 LLM 客户端，替代 createLlmClient() 的文件配置构造 */
+  llm?: LlmClient;
+  /** 注入的 KG MCP 客户端（已带服务端配置）；connect/close 生命周期仍由 runExploration 管理 */
+  mcpClient?: KgMcpClient;
+  /** 循环内部直读的 model / max_tokens（initState 预算、主 LLM 调用、事件分类） */
+  llmConfig?: Pick<LlmConfig, "model" | "max_tokens">;
+}
+
 export async function runExploration(
   input: ExplorationInput,
   onStep?: (event: StepEvent) => void,
   initialState?: ExplorationState,
   signal?: AbortSignal,
+  deps?: ExplorationDeps,
 ): Promise<ExplorationResult> {
-  const state = initialState ?? initState(input);
+  const state = initialState ?? initState(input, deps?.llmConfig);
   const sl = input.session_id
     ? log.child({ sessionId: input.session_id })
     : log;
-  const llm = createLlmClient();
-  const mcpClient = new KgMcpClient();
+  const llm = deps?.llm ?? createLlmClient();
+  const llmCfg = deps?.llmConfig ?? readConfig().llm;
+  const mcpClient = deps?.mcpClient ?? new KgMcpClient();
 
   try {
     await mcpClient.connect();
@@ -1089,8 +1108,8 @@ export async function runExploration(
       try {
         sl.info("调用 LLM");
         const response = await llm.messages.create({
-          model: readConfig().llm.model,
-          max_tokens: readConfig().llm.max_tokens,
+          model: llmCfg.model,
+          max_tokens: llmCfg.max_tokens,
           system: context.systemPrompt,
           messages: llmMessages,
         });
@@ -1148,7 +1167,7 @@ export async function runExploration(
 
       // ─── 5. 根据 phase 处理 ───
       if (state.phase === "EXPLORING") {
-        await handleExploring(parsed, state, mcpClient, messages, input, onStep);
+        await handleExploring(parsed, state, mcpClient, llm, llmCfg.model, messages, input, onStep);
         const newPhase = checkPhaseTransition(state);
         sl.info({ from: state.phase, to: newPhase }, "阶段切换");
         state.phase = newPhase;
@@ -1172,6 +1191,8 @@ async function handleExploring(
   parsed: NonNullable<ReturnType<typeof fixLLMOutput>>,
   state: ExplorationState,
   mcpClient: KgMcpClient,
+  llm: LlmClient,
+  model: string,
   messages: MessageParam[],
   input: ExplorationInput,
   onStep?: (event: StepEvent) => void,
@@ -1278,7 +1299,7 @@ async function handleExploring(
   state.frontier = state.frontier.filter((e) => !state.visited.has(resolveName(e.name, state)));
 
   // LLM 批量分类新归档事件的数据类型（用于置信度加权和 Thread 过滤）
-  await classifyBatchEvents(state);
+  await classifyBatchEvents(state, llm, model);
 
   // 处理 findings → 路由到三层（entity_flags / cluster_flags / key_insights）
   let newFindingsCount = 0;

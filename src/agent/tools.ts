@@ -15,7 +15,7 @@ export function isMcpTool(name: string): name is McpToolName {
 
 export interface LookupInput {
   entities: string[];
-  intent?: "ENTITY_OVERVIEW" | "ENTITY_TIMELINE";
+  intent?: "ENTITY_OVERVIEW" | "ENTITY_TIMELINE" | "COMPARATIVE_ANALYSIS";
   time_range?: string;
   top_k?: number;
   event_types?: string[];
@@ -42,6 +42,7 @@ export interface ExpandInput {
 
 export interface ScanInput {
   entities: string[];
+  intent?: "EVENT_ANALYSIS" | "TOPIC_RESEARCH";
   event_types?: string[];
   time_range?: string;
 }
@@ -156,9 +157,10 @@ event_types 过滤指引: 首轮摸底/陌生实体不要过滤（先看全貌�
         },
         intent: {
           type: "string",
-          enum: ["ENTITY_OVERVIEW", "ENTITY_TIMELINE"],
+          enum: ["ENTITY_OVERVIEW", "ENTITY_TIMELINE", "COMPARATIVE_ANALYSIS"],
           default: "ENTITY_OVERVIEW",
-          description: "ENTITY_OVERVIEW=综合概览, ENTITY_TIMELINE=时间线",
+          description:
+            "ENTITY_OVERVIEW=综合概览, ENTITY_TIMELINE=时间线, COMPARATIVE_ANALYSIS=多实体对比（entities 传 2 个以上）",
         },
         event_types: {
           type: "array",
@@ -313,7 +315,15 @@ event_types 过滤指引: 首轮摸底/陌生实体不要过滤（先看全貌�
         entities: {
           type: "array",
           items: { type: "string" },
-          description: "要检查的实体中文名列表",
+          description:
+            "EVENT_ANALYSIS（默认）: 要检查的实体中文名列表；TOPIC_RESEARCH: 主题词列表，如 ['新能源车产业链', '固态电池']",
+        },
+        intent: {
+          type: "string",
+          enum: ["EVENT_ANALYSIS", "TOPIC_RESEARCH"],
+          default: "EVENT_ANALYSIS",
+          description:
+            "EVENT_ANALYSIS=按实体列表筛某类事件（默认）；TOPIC_RESEARCH=按主题/产业链召回相关实体与事件（适合产业链梳理类目标，一次调用替代多轮 lookup 拼链。重查询——一次目标调用一次，不要反复调）",
         },
         event_types: {
           type: "array",
@@ -385,12 +395,14 @@ export function mapToMcpCall(toolName: McpToolName, args: ToolInput): McpCall {
     }
     case "scan": {
       const a = args as ScanInput;
+      const intent = a.intent ?? "EVENT_ANALYSIS";
       return {
         method: "search_knowledge",
         params: {
           entities: a.entities,
-          intent: "EVENT_ANALYSIS",
-          event_types: a.event_types,
+          intent,
+          // event_types 语义只属于 EVENT_ANALYSIS；TOPIC_RESEARCH 是主题召回，不叠加类型过滤
+          event_types: intent === "EVENT_ANALYSIS" ? a.event_types : undefined,
           time_range: a.time_range,
         },
       };

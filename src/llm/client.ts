@@ -4,7 +4,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import type { AppConfig } from "../agent/config.js";
+import type { LlmConfig } from "../agent/config.js";
 import { readConfig, getApiKey, resolveProvider } from "../agent/config.js";
 import type { MessageParam, Tool, Message, Stream } from "./types.js";
 import { messagesToOpenAi, toolsToOpenAi, responseToMessage, openAiStreamToAnthropic } from "./openai.js";
@@ -31,21 +31,29 @@ export interface LlmClient {
 
 // ─── Factory ───
 
-export function createLlmClient(): LlmClient {
-  const config = readConfig();
-  const provider = resolveProvider();
+// 注入参数（嵌入式宿主用）：llm 整体覆盖文件配置；apiKey 显式指定（跳过 getApiKey 链）
+export interface CreateClientOverrides {
+  llm?: LlmConfig;
+  apiKey?: string;
+}
+
+export function createLlmClient(overrides?: CreateClientOverrides): LlmClient {
+  const llm = overrides?.llm ?? readConfig().llm;
+  const provider = overrides?.llm?.provider ?? resolveProvider();
+  const apiKey = overrides?.apiKey ?? getApiKey();
+  const config = { llm };
 
   if (provider === "openai") {
-    return createOpenAiClient(config);
+    return createOpenAiClient(config, apiKey);
   }
-  return createAnthropicClient(config);
+  return createAnthropicClient(config, apiKey);
 }
 
 // ─── Anthropic 实现 ───
 
-function createAnthropicClient(config: AppConfig): LlmClient {
+function createAnthropicClient(config: { llm: LlmConfig }, apiKey: string): LlmClient {
   const client = new Anthropic({
-    apiKey: getApiKey(),
+    apiKey,
     baseURL: config.llm.base_url,
   });
 
@@ -135,9 +143,9 @@ function createAnthropicClient(config: AppConfig): LlmClient {
 
 // ─── OpenAI 实现 ───
 
-function createOpenAiClient(config: AppConfig): LlmClient {
+function createOpenAiClient(config: { llm: LlmConfig }, apiKey: string): LlmClient {
   const client = new OpenAI({
-    apiKey: getApiKey(),
+    apiKey,
     baseURL: config.llm.base_url,
   });
 

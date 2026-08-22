@@ -1,6 +1,6 @@
 # Tools — 5 个 KG 工具
 
-> 状态: 已实现（v3 五意图架构 + v3.1 KG 服务契约对齐 + v3.2 event_types 定向过滤） | 已对齐: 3392100 (2026-08-16)
+> 状态: 已实现（v3 五意图架构 + v3.1 KG 服务契约对齐 + v3.2 event_types 定向过滤 + v3.3 新 intent 接入） | 已对齐: 2e82a95 (2026-08-16)
 >
 > 源码: `src/agent/tools.ts`。v3 删除了 v2 的 3 个 recall 内存读取工具
 > （recall_entity/recall_buffer/recall_finding）——温层已随五意图重构移除，
@@ -21,11 +21,11 @@
 
 | 工具 | 用途 | 底层 MCP | intent |
 |------|------|----------|--------|
-| lookup | 实体概览/对比/时间线 | search_knowledge | ENTITY_OVERVIEW / ENTITY_TIMELINE |
+| lookup | 实体概览/对比/时间线 | search_knowledge | ENTITY_OVERVIEW / ENTITY_TIMELINE / COMPARATIVE_ANALYSIS |
 | trace | 两实体间关系路径（一次一对） | search_knowledge | RELATIONSHIP_QUERY |
 | timeline | 单实体事件时间线 | search_knowledge | ENTITY_TIMELINE |
 | expand | 展开事件聚类全详情 | expand_graph_detail | — |
-| scan | 批量筛选实体是否有特定类型事件 | search_knowledge | EVENT_ANALYSIS |
+| scan | 批量筛事件 / 主题召回 | search_knowledge | EVENT_ANALYSIS / TOPIC_RESEARCH |
 
 ---
 
@@ -90,12 +90,12 @@ KG 服务把参数校验类错误作为 `{"error": "..."}` 放在**正常 conten
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |------|------|------|------|------|
 | entities | string[] | ✓ | | 实体中文名列表，如 `['宁德时代', '比亚迪']` |
-| intent | enum | | ENTITY_OVERVIEW | ENTITY_OVERVIEW=综合概览 / ENTITY_TIMELINE=时间线 |
+| intent | enum | | ENTITY_OVERVIEW | ENTITY_OVERVIEW=综合概览 / ENTITY_TIMELINE=时间线 / COMPARATIVE_ANALYSIS=多实体对比（服务端原生对比检索） |
 | event_types | string[] | | | 定向子目标过滤（见"event_types 定向过滤"） |
 | time_range | string | | | 如 `'2024-01-01:2024-12-31'`（双端必填） |
 | top_k | int | | 20 | 1-100 |
 
-**MCP 映射**: `search_knowledge(entities, intent, hops=1, event_types, time_range, top_k)`
+**MCP 映射**: `search_knowledge(entities, intent, hops=1, event_types, time_range, top_k)`；`intent=COMPARATIVE_ANALYSIS` 时 entities 传 2 个以上，仍 hops=1（单语义跳不变）
 
 ### 2. trace — 追踪两实体间关系路径
 
@@ -137,16 +137,21 @@ KG 服务把参数校验类错误作为 `{"error": "..."}` 放在**正常 conten
 
 **MCP 映射**: `expand_graph_detail(cluster_ids)`
 
-### 5. scan — 批量扫描实体验证假设
+### 5. scan — 批量筛事件 / 主题召回
 
-**何时用**: 快速验证"这些实体是否都有某类事件"（如"这些供应商有多少被制裁过"）→ 比例确认 → concentration 类 finding
+**何时用**: 快速验证"这些实体是否都有某类事件"（如"这些供应商有多少被制裁过"）→ 比例确认 → concentration 类 finding；产业链/主题类目标一次召回实体集（TOPIC_RESEARCH）
 **注意**: 批量调用，token 成本随实体数量线性增长
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| entities | string[] | ✓ | 要检查的实体中文名列表 |
-| event_types | string[] | | 事件类型过滤（32 类闭集，见下方） |
+| entities | string[] | ✓ | EVENT_ANALYSIS: 实体中文名列表；TOPIC_RESEARCH: 主题词列表（如 `['新能源车产业链', '固态电池']`） |
+| intent | enum | | 默认 EVENT_ANALYSIS（按实体筛事件）；TOPIC_RESEARCH（按主题/产业链召回） |
+| event_types | string[] | | 仅 EVENT_ANALYSIS 有效（32 类闭集，见下方） |
 | time_range | string | | 可选，双端 ISO 必填 |
+
+**TOPIC_RESEARCH 约束**: 重查询（实测 12-36s，服务负载高时更久），一次目标
+调用一次、不反复调；语义是主题召回，event_types 不叠加。客户端 MCP 超时
+已提升至 60s 适配（实测延迟 21-97s 波动，30s 会间歇性击穿）。
 
 **event_types 32 类闭集**（canonical 英文值或中文别名均可，服务端归一化；
 未知类型服务端报错并列出合法值）:

@@ -1,0 +1,67 @@
+# dsh-fin-trace 插件发布 —— 仅 plugin-v* tag 显式触发
+# 守卫: ① tag↔package.json 版本一致 ② 自上一 plugin-v* tag 以来必须触及插件相关路径
+# secret: NPM_TOKEN（@lihangcz granular token）；repo public → npm provenance 可用
+#
+# 注意: 不要在本 workflow 加 branches/paths 触发器 —— paths 过滤器对 tag 推送的
+# 求值行为不可靠，可能误拦发布（校验 lane 见 plugin-verify.yml）
+
+name: plugin-release
+
+on:
+  push:
+    tags: ["plugin-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 相关性守卫需要 diff 上一 plugin-v* tag
+
+      # 守卫 1: tag ↔ package.json 版本一致（plugin-v0.1.0 ↔ 0.1.0）
+      - name: Tag/version consistency check
+        run: |
+          PKG_VERSION="v$(jq -r .version packages/dsh-fin-trace/package.json)"
+          TAG_VERSION="${GITHUB_REF_NAME#plugin-}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 package.json 版本 $PKG_VERSION 不一致"
+            exit 1
+          fi
+          echo "版本一致: $TAG_VERSION"
+
+      # 守卫 2: 路径相关性 —— 上一 plugin-v* tag 以来必须触及插件相关路径（防误发）
+      # 路径集权威源: .github/plugin-paths.txt
+      - name: Relevance guard (path-set diff)
+        run: |
+          LAST_TAG=$(git tag -l 'plugin-v*' --sort=-v:refname | sed -n 2p)
+          if [ -z "$LAST_TAG" ]; then
+            echo "首个 plugin tag，跳过相关性检查"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$LAST_TAG" "$GITHUB_SHA")
+          if ! grep -Ef .github/plugin-paths.txt <<< "$CHANGED"; then
+            echo "::error::tag $GITHUB_REF_NAME 未涉及插件相关路径（自 $LAST_TAG 以来），拒绝发布"
+            exit 1
+          fi
+          echo "相关性检查通过（对照 $LAST_TAG）"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Build & publish
+        working-directory: packages/dsh-fin-trace
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm ci
+          npm run build
+          npm publish --provenance --access public

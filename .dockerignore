@@ -1,10 +1,12 @@
 # 依赖目录（构建阶段会重新 npm ci）
 node_modules/
 web/node_modules/
+packages/*/node_modules/
 
 # 构建产物（构建阶段会重新生成）
 dist/
 web/dist/
+packages/*/dist/
 **/*.tsbuildinfo
 
 # 运行时数据（通过 volume 挂载，绝不进镜像）

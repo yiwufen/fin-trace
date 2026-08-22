@@ -4,13 +4,15 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { readConfig } from "./config.js";
+import { readConfig, type McpServerConfig } from "./config.js";
 import { type ToolInput, mapToMcpCall, validateToolArgs } from "./tools.js";
 import type { ToolResult, McpToolName } from "./state.js";
 
 // ─── 常量 ───
 
-const MCP_TIMEOUT_MS = 30_000;
+// KG 服务升级后实测延迟 21-97s（热点实体/主题召回类查询），30s 会间歇性击穿；
+// 60s 覆盖绝大多数实测样本，配合 event_types 过滤指引控制常态延迟
+const MCP_TIMEOUT_MS = 60_000;
 const RETRY_DELAY_L1 = 2_000; // L1: 首次重试 2s
 const RETRY_DELAY_L2 = 5_000; // L2: 二次重试 5s
 const MAX_CONSECUTIVE_ERRORS = 3;
@@ -54,25 +56,28 @@ export class KgMcpClient {
   private client: Client;
   private transport: StreamableHTTPClientTransport | SSEClientTransport | null = null;
   private connected = false;
+  private serverConfig?: McpServerConfig;
   private _state: McpClientState = {
     degraded: false,
     consecutiveErrors: 0,
   };
 
-  constructor() {
+  // serverConfig：注入的服务端配置（嵌入式宿主用）；不传则 connect() 时读 config.json
+  constructor(serverConfig?: McpServerConfig) {
     this.client = new Client({
       name: "fin-trace",
       version: "1.0.0",
     });
+    this.serverConfig = serverConfig;
   }
 
   // ─── 连接管理 ───
 
   async connect(): Promise<void> {
-    const config = readConfig();
-    const url = new URL(config.mcp.servers.knowledge_graph.url);
-    const transportType = config.mcp.servers.knowledge_graph.transport ?? "streamable-http";
-    const apiKey = config.mcp.servers.knowledge_graph.api_key;
+    const kg = this.serverConfig ?? readConfig().mcp.servers.knowledge_graph;
+    const url = new URL(kg.url);
+    const transportType = kg.transport ?? "streamable-http";
+    const apiKey = kg.api_key;
 
     const requestInit: RequestInit = apiKey
       ? { headers: { Authorization: `Bearer ${apiKey}` } }
