@@ -17,3 +17,8 @@ deploy-image.sh
 # eval runtime artifacts
 eval/runs/
 eval/judgments/
+
+# ZCode workspace 配置随仓库共享；plans 为会话产物不入库
+# （根 .gitignore 的 config.json 模式会匹配 .zcode/config.json，需负向豁免）
+.zcode/plans/
+!.zcode/config.json

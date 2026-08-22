@@ -96,7 +96,7 @@ push main / PR ─→ CI 仅验证（typecheck + docker build）
 
 `packages/dsh-fin-trace/`（npm 包 `@lihangcz/dsh-fin-trace`）有独立的发布 lane，与服务器部署互不触发：
 
-- **发布 = push tag `plugin-vX.Y.Z`**（触发 `plugin-release.yml`：版本一致性 + 路径相关性两道守卫 → `npm publish --provenance`）。**绝不本地 `npm publish`**——账号启用 2FA，本地 token 一律 403，CI 是唯一发布通道
+- **发布 = push tag `plugin-vX.Y.Z`**（触发 `plugin-release.yml`：版本一致性 + 路径相关性两道守卫 → `npm publish --provenance`）。**绝不本地 `npm publish`**——账号启用 2FA，本地 token 一律 403，CI 是唯一发布通道；本仓库已配 workspace hook（`.zcode/config.json`，PreToolUse）**硬拦截** Bash 里的 `npm publish`（`--dry-run` 放行）
 - **tag 打在 main 提交上，且与 `packages/dsh-fin-trace/package.json` 的 version 严格一致**（守卫会拒绝不一致）
 - **验证 lane**：插件相关路径的 PR/main push 触发 `plugin-verify.yml`（root typecheck + 插件 typecheck/build/dry-run）。路径集唯一权威源是 `.github/plugin-paths.txt`，与 `plugin-verify.yml` 内联的两份 paths 列表必须三处同步
 - **link 验证通过 ≠ npm 安装可用**（0.1.2 前车之鉴）——发布前必须 `npm pack` 后在真实 profile 以 npm/tarball 安装真机验证（插件激活、工具+job 链路、web 下发 `/plugins/<pkg>/client.js` 200 且 boot 图含本包行）

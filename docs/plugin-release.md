@@ -23,6 +23,10 @@ GitHub Actions                                    npm
 token ... required`），唯一发布通道是 CI（`NPM_TOKEN` granular secret + provenance attestation，
 发布来源可溯源到对应的 GitHub Actions run）。
 
+**硬拦截**：仓库带 ZCode workspace hook（`.zcode/config.json` →
+`.zcode/hooks/block-local-npm-publish.py`），`PreToolUse(Bash)` 在命令匹配 `npm publish`
+（非 `--dry-run`）时直接 deny 并提示正确流程——AGENTS.md 的规则是告知，hook 是强制。
+
 - 两条 lane 与服务器部署（`deploy.yml`，`vX.Y.Z` tag）完全独立，互不触发
 - tag 必须打在 **main 分支的提交**上，且 `plugin-vX.Y.Z` 与 `packages/dsh-fin-trace/package.json`
   的 `version` 严格一致（守卫①会校验）
