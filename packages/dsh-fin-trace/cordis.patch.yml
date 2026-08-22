@@ -1,0 +1,7 @@
+# dsh-fin-trace bundle patch: 将 fin-trace 金融知识图谱探索工具插入任何
+# 叠加此 bundle 的 profile（或经 `dsh plugin add @lihangcz/dsh-fin-trace` 安装）。
+# 用户可在自己的 cordis.patch.yml 中按 id 覆盖配置或禁用本行。
+
+- insert:
+    - id: fin-trace-explore
+      name: 'dsh-fin-trace'
