@@ -1,0 +1,15 @@
+# dsh-fin-trace 插件发布的相关路径集（唯一权威源）
+# - plugin-verify.yml 的 PR/main push `paths:` 过滤器内联了同一份清单（GitHub Actions
+#   不支持从文件读取 paths），修改此处时必须同步更新 workflow 内的两份内联列表
+# - plugin-release.yml 发布 job 的相关性守卫（git diff 上一 plugin-v* tag）直接读取本文件
+^packages/dsh-fin-trace/
+^src/agent/
+^src/llm/
+^src/tool-categories\.ts$
+^src/logger\.ts$
+^src/settings-store\.ts$
+^\.github/workflows/plugin-verify\.yml$
+^\.github/workflows/plugin-release\.yml$
+^\.github/plugin-paths\.txt$
+^package\.json$
+^package-lock\.json$

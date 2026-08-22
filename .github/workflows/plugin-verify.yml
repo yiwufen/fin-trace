@@ -1,0 +1,65 @@
+# dsh-fin-trace 插件校验 —— 仅插件相关路径变化的 PR / main push 才跑
+# （发布管线在 plugin-release.yml，仅 plugin-v* tag 触发；两者与 ci.yml/deploy.yml 互不触发）
+#
+# 路径集权威源: .github/plugin-paths.txt —— 修改时必须同步下方内联 paths 列表
+# （GitHub Actions 不支持从文件读取 paths 过滤器）
+
+name: plugin-verify
+
+on:
+  pull_request:
+    paths:
+      - "packages/dsh-fin-trace/**"
+      - "src/agent/**"
+      - "src/llm/**"
+      - "src/tool-categories.ts"
+      - "src/logger.ts"
+      - "src/settings-store.ts"
+      - ".github/workflows/plugin-verify.yml"
+      - ".github/workflows/plugin-release.yml"
+      - ".github/plugin-paths.txt"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main]
+    paths:
+      - "packages/dsh-fin-trace/**"
+      - "src/agent/**"
+      - "src/llm/**"
+      - "src/tool-categories.ts"
+      - "src/logger.ts"
+      - "src/settings-store.ts"
+      - ".github/workflows/plugin-verify.yml"
+      - ".github/workflows/plugin-release.yml"
+      - ".github/plugin-paths.txt"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 插件包独立 lockfile（不在 root workspaces）；root typecheck 单独跑保证主服务无回归
+      - name: Root typecheck (server regression guard)
+        run: npm ci --include-workspace-root && npm run typecheck
+
+      - name: Plugin typecheck + build + publish dry-run
+        working-directory: packages/dsh-fin-trace
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm publish --dry-run
