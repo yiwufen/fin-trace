@@ -20,12 +20,48 @@ dsh plugin --profile web add @lihangcz/dsh-fin-trace
 
 | 工具 | 说明 |
 |------|------|
-| `fintrace_explore_start` | 提交探索任务（goal + seed_entities，可选 max_depth / time_range），立即返回 `task_id` |
-| `fintrace_explore_status` | 轮询任务：status / progress / 最近步骤 / 终态结果（findings、event_threads、exploration_meta 含 tokens_used） |
+| `fintrace_explore_start` | 提交探索任务（goal + seed_entities，可选 max_depth / time_range），立即返回 `task_id`（与后台 `job_id`）；任务同时注册为宿主后台 job，完成时自动通知唤醒 agent |
+| `fintrace_explore_status` | 单次查询任务状态/进度/终态结果（findings、event_threads、exploration_meta 含 tokens_used）——按需调用，不是轮询手段 |
 | `fintrace_explore_cancel` | 取消运行中任务；循环优雅收尾，已产出的 findings 保留在结果里 |
 
 耗时参考：depth=1 约 3-5 分钟，depth=2 约 5-12 分钟，depth=3 约 10-20 分钟。
-任务在插件内后台运行，不阻塞单次工具调用；agent 侧 start → 干别的 → 隔步 status 轮询即可。
+任务在插件内后台运行，不阻塞单次工具调用。**推荐 agent 侧流程：start → 直接结束回合
+（告知用户任务已启动）→ 完成通知自动唤醒 → status 或 job_output 一次性读取结果**；
+status 只在用户明确要中途进度、或通知丢失后恢复时单次调用。工具描述与运行中响应
+均内置"请勿轮询"引导，避免无谓的 LLM 轮询开销。
+
+## 后台任务与 UI 展示
+
+自 0.2.0 起，每次探索同时注册为宿主后台 job（`ctx.jobs`，kind=`fintrace`），用户安装插件即得：
+
+- **会话头部任务徽标/弹层**（web profile）：运行行显示任务 label、状态、逐秒耗时；终态行保留
+  status detail（如 `8 findings · 23 实体 · 51000 tokens`）
+- **完成通知**：探索结束（或失败/取消）时 agent 自动收到后台任务通知（忙碌时注入下一步、空闲时唤醒开新 turn），
+  无需密集轮询——提交后可直接结束回合，通知会唤醒 agent 汇报；可用宿主 `job_output` 一次性读取最终结果
+  JSON（64KB 截断），也可继续用 `fintrace_explore_status` 读取结构化结果
+- **宿主 `job_kill` 通道**：与 `fintrace_explore_cancel` 等效（都会触发优雅收尾，保留已产出 findings）
+- **工具卡片**：三件套经 `presentCall`/`presentResult` 声明渲染意图 —— status 卡片按阶段显示
+  `探索进行中 · step N · X 实体 · Y findings` / `探索完成 · Y findings · Z threads · K tokens`
+  及最近步骤、主要发现概览；历史会话回放渲染一致（`presentationMeta` 随会话日志持久化）
+
+说明：job 的 `detail` 为终态字段，运行中的实时进度仍经 `fintrace_explore_status` 卡片刷新；
+`ctx.jobs` 不可用的宿主上自动降级为纯 taskStore 模式（行为同 0.1.x）。
+
+### 实时探索面板（自 0.3.0，自带客户端半边）
+
+包内携带 web 客户端 bundle（`dsh.client` 双面包，`exports["./client"]` → `dist/client.js`），
+宿主启动时自动发现并入 boot 图，无需用户注册。三件套工具的会话卡片由插件自有 React 组件渲染
+（`tool.call.toolview` keyed slot）：
+
+- **`fintrace_explore_start` 卡片 = 实时过程面板**：任务运行中每 3 秒轮询宿主
+  `GET /fintrace/task?id=<task_id>`，展示 step/当前决策、实体与 findings 计数、token 预算条、
+  最近步骤时间线；任务 settle 后停止轮询、定格终态摘要（counts + 主要 findings + 完成原因）
+- **`fintrace_explore_status` 卡片**：按该次调用的 presentationMeta 快照渲染四态
+  （进行中/完成/失败/取消），历史会话回放一致；卡片不自动刷新
+- **`fintrace_explore_cancel` 卡片**：取消结果
+
+宿主重启或 headless 提交的历史会话回放时无实时数据，面板回退为静态"已提交"视图。
+客户端代码只依赖平台基线（React 由宿主 shell 种子提供），不新增 profile 依赖。
 
 产出结构（与 fin-trace 服务器版完全一致，同一份核心代码）：
 
@@ -75,6 +111,11 @@ runningTimeoutMinutes: 30     # 运行超时（超时中止并标记 failed）
 
 除这两个端点与 dsh 自身行为外，本插件不发起其他网络请求、不读写宿主文件系统
 （核心循环的 config.json / data/settings.json 文件路径已通过依赖注入旁路）。
+
+web profile 下插件还会在本机 webServer 上注册 `GET /fintrace/task` 只读轮询端点
+（返回探索任务进度 JSON：status/progress/最近步骤/终态摘要），供客户端实时面板使用。
+该端点与 `/plugins` 静态下发同级、无鉴权——服务器绑定非 localhost 时，同网段可读取探索进度；
+请按部署环境自行注意暴露面。
 
 ## 与 fin-trace 服务器版的关系
 
