@@ -4,6 +4,11 @@
   "description": "DeepSeek Harness (dsh) plugin embedding the fin-trace agent loop — multi-hop relationship reasoning over a financial knowledge graph, exposed as async tools (start/status/cancel)",
   "type": "module",
   "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yiwufen/fin-trace.git",
+    "directory": "packages/dsh-fin-trace"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
