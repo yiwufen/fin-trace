@@ -13,7 +13,8 @@ dsh plugin --profile web add @lihangcz/dsh-fin-trace
 安装后重启 dsh 生效（bundle 补丁层需重启激活）。卸载：Settings → Plugins 管理，或按
 `cordis.patch.yml` 中 `fin-trace-explore` 行自行覆盖/禁用。
 
-> 兼容性标注：实测 dsh 版本 `__DSH_VERSION__`（发布时回填）。
+> 兼容性标注：实测 dsh 版本 `0.1.1-rc.2`（`--profile headless` 真机验证：插件加载、
+> 三工具注册与调用、异步任务全链路、优雅降级路径）。dsh 处于 rc 阶段，API 可能变动。
 
 ## 工具
 
@@ -47,10 +48,22 @@ llm:
 kg:
   url: https://kg.yiyiyiwufeng.cn/mcp
   transport: streamable-http  # streamable-http | sse
-  api_key: ""
+  api_key: ""                 # 默认端点需要鉴权，务必填写（否则任务以 mcp_unavailable 结束）
 maxConcurrentTasks: 2         # 并发上限（每任务占一条 3-20 分钟的 KG 长连接）
 taskTtlMinutes: 60            # 终态任务保留时长
 runningTimeoutMinutes: 30     # 运行超时（超时中止并标记 failed）
+```
+
+在 profile 的用户 patch 层（`~/.dsh/profiles/<name>/cordis.patch.yml`）可按 id 覆盖本插件配置，
+无需改包：
+
+```yaml
+- id: fin-trace-explore
+  config:
+    kg:
+      api_key: <your-kg-key>
+    llm:
+      api_key: <your-llm-key>
 ```
 
 ## 网络出口（egress）披露

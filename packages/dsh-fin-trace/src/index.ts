@@ -27,7 +27,8 @@ import { createLlmClient } from "../../../src/llm/client.js";
 import { KgMcpClient } from "../../../src/agent/mcp-client.js";
 import type { LlmConfig } from "../../../src/agent/config.js";
 
-export const name = "dsh-fin-trace";
+// name 必须等于包名（loader 以 patch 行的 name 作为 import 说明符解析模块）
+export const name = "@lihangcz/dsh-fin-trace";
 export const inject = ["tools"];
 
 // ─── 常量 ───

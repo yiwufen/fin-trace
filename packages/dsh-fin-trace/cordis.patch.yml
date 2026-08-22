@@ -4,4 +4,5 @@
 
 - insert:
     - id: fin-trace-explore
-      name: 'dsh-fin-trace'
+      # name 同时是 import 说明符，必须等于包名（含 scope）
+      name: '@lihangcz/dsh-fin-trace'
