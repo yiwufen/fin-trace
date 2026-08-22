@@ -1,6 +1,6 @@
 # Agent Loop — Phase 状态机与流程
 
-> 状态: 已实现（v3 五意图架构） | 已对齐: 33f02f7 (2026-08-16)
+> 状态: 已实现（v3 五意图架构） | 已对齐: dff329c (2026-08-22)
 >
 > 源码: `src/agent/loop.ts`（主循环 + Phase 切换）、`src/agent/error-handler.ts`
 > （决策校验/终止信号/循环检测）。上下文组装见 [context-assembly.md](context-assembly.md)，
@@ -11,7 +11,7 @@
 ## 核心流程
 
 ```
-入口: runExploration(input)
+入口: runExploration(input, onStep?, initialState?, signal?, deps?)
   ├─ MCP 连接（失败 → 立即降级返回 mcp_unavailable，不做探索）
   ├─ initState（seed → frontier，预算分池，时间上下文注入）
   └─ 主循环 while (!done):
@@ -32,6 +32,18 @@
          done = true
   return assembleOutput(state)
 ```
+
+### 依赖注入（deps，嵌入式宿主）
+
+第 5 个可选参数 `ExplorationDeps`，供嵌入式宿主（dsh 插件等）注入运行时依赖：
+
+| 字段 | 说明 |
+|------|------|
+| `llm` | 注入的 LLM 客户端，替代 `createLlmClient()` 的文件配置构造 |
+| `mcpClient` | 注入的 KG MCP 客户端（构造时带 `McpServerConfig`）；connect/close 生命周期仍由 runExploration 管理 |
+| `llmConfig` | 循环内部直读的 `model` / `max_tokens`（initState 预算、主 LLM 调用、事件分类） |
+
+不传时与文件配置路径（`config.json` → `createLlmClient()` / `new KgMcpClient()`）行为完全一致，服务器侧 7 个调用点无感。
 
 ---
 

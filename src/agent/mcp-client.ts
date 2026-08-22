@@ -4,7 +4,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { readConfig } from "./config.js";
+import { readConfig, type McpServerConfig } from "./config.js";
 import { type ToolInput, mapToMcpCall, validateToolArgs } from "./tools.js";
 import type { ToolResult, McpToolName } from "./state.js";
 
@@ -56,25 +56,28 @@ export class KgMcpClient {
   private client: Client;
   private transport: StreamableHTTPClientTransport | SSEClientTransport | null = null;
   private connected = false;
+  private serverConfig?: McpServerConfig;
   private _state: McpClientState = {
     degraded: false,
     consecutiveErrors: 0,
   };
 
-  constructor() {
+  // serverConfig：注入的服务端配置（嵌入式宿主用）；不传则 connect() 时读 config.json
+  constructor(serverConfig?: McpServerConfig) {
     this.client = new Client({
       name: "fin-trace",
       version: "1.0.0",
     });
+    this.serverConfig = serverConfig;
   }
 
   // ─── 连接管理 ───
 
   async connect(): Promise<void> {
-    const config = readConfig();
-    const url = new URL(config.mcp.servers.knowledge_graph.url);
-    const transportType = config.mcp.servers.knowledge_graph.transport ?? "streamable-http";
-    const apiKey = config.mcp.servers.knowledge_graph.api_key;
+    const kg = this.serverConfig ?? readConfig().mcp.servers.knowledge_graph;
+    const url = new URL(kg.url);
+    const transportType = kg.transport ?? "streamable-http";
+    const apiKey = kg.api_key;
 
     const requestInit: RequestInit = apiKey
       ? { headers: { Authorization: `Bearer ${apiKey}` } }
