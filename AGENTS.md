@@ -103,6 +103,12 @@ push main / PR ─→ CI 仅验证（typecheck + docker build）
 - **宿主版本锚定 dsh `0.1.1-rc.2`**：`@deepseek-ai/*` devDeps 固定 exact 并全部打进 dist、不进 dependencies（防止 profile 内双实例分裂 symbol）；宿主升级需重新对齐并回归
 - 完整发布文档：`docs/plugin-release.md`
 
+### git push main 拦截（workspace hook）
+
+- **push main 由人工执行**：远程 main 是发布通道（deploy / plugin-release 的 tag 都要求打在 main 提交上），ZCode 只负责本地 commit，可 push feature 分支（显式分支名）；所有会更新 main 的 git push 由 `.zcode/config.json` 的 PreToolUse hook（`.zcode/hooks/block-git-push-main.py`）**硬拦截**
+- 拦截范围：目标为 main 的 refspec（`main` / `HEAD:main` / `+main` / `:main` 删除 / `--delete main` / `refs/heads/main`）、`--all` / `--mirror`、以及 main 分支上的裸 `git push` 与 `HEAD`/`@` refspec；`--dry-run` 放行
+- 发布 lane 的"push main → push tag"两步由仓库所有者手动完成；hook 不拦 tag 推送（子 shell/续行等混淆写法亦不覆盖——这是工作流护栏，不是安全边界）
+
 ## Design Document Index
 
 Master index: `design-docs/README.md` — refer there for the full list, the v2→v3 terminology baseline, and the archive. The nine core specs were realigned to the v3 code (五意图架构) in 2026-08 and each carries a status header (`已对齐: <SHA>`).
