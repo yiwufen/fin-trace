@@ -9,6 +9,8 @@
 //       presentResult 只读 result.meta（纯函数，live 与会话回放共用）
 // 依赖注入: 经 ExplorationDeps 注入 LLM/KG MCP 客户端与模型配置，
 //          完全不读宿主 cwd 的 config.json / data/settings.json
+// 日志: agent 核心的 pino 日志改道进宿主 ctx.logger（cordis LoggerService），
+//       不写宿主进程 stdout——dsh 自身不打 stdout，插件同样不应打
 // 对应设计: design-docs/agent-loop.md「依赖注入（deps，嵌入式宿主）」
 
 import { randomUUID } from "node:crypto";
@@ -51,6 +53,7 @@ import {
 import { createLlmClient } from "../../../src/llm/client.js";
 import { KgMcpClient } from "../../../src/agent/mcp-client.js";
 import type { LlmConfig } from "../../../src/agent/config.js";
+import { logger as rootLogger, setLoggerSink } from "../../../src/logger.js";
 
 // name 必须等于包名（loader 以 patch 行的 name 作为 import 说明符解析模块）
 export const name = "@lihangcz/dsh-fin-trace";
@@ -81,6 +84,7 @@ export const Config = Schema.object({
   maxConcurrentTasks: Schema.number().default(2),
   taskTtlMinutes: Schema.number().default(60),
   runningTimeoutMinutes: Schema.number().default(30),
+  logLevel: Schema.union(["debug", "info", "warn", "error"]).default("info"),
 });
 
 /** apply 实际使用的规范化配置（所有字段有默认值） */
@@ -90,6 +94,7 @@ interface PluginConfig {
   maxConcurrentTasks: number;
   taskTtlMinutes: number;
   runningTimeoutMinutes: number;
+  logLevel: "debug" | "info" | "warn" | "error";
 }
 
 function normalizeConfig(raw: Record<string, any> | undefined): PluginConfig {
@@ -112,6 +117,10 @@ function normalizeConfig(raw: Record<string, any> | undefined): PluginConfig {
     maxConcurrentTasks: num(raw?.maxConcurrentTasks, 2),
     taskTtlMinutes: num(raw?.taskTtlMinutes, 60),
     runningTimeoutMinutes: num(raw?.runningTimeoutMinutes, 30),
+    logLevel:
+      raw?.logLevel === "debug" || raw?.logLevel === "warn" || raw?.logLevel === "error"
+        ? raw.logLevel
+        : "info",
   };
 }
 
@@ -414,6 +423,21 @@ export function apply(ctx: Context, rawConfig?: Record<string, any>) {
   const config = normalizeConfig(rawConfig);
   const taskStore = new Map<string, FintraceTask>();
 
+  // 日志改道：agent 核心的 pino 日志（默认出口 = 进程 stdout）转发进宿主 cordis LoggerService，
+  // 与 dsh 自身日志同通道（内存环形缓冲 + 宿主注册的 exporter）——dsh 不打 stdout，插件也不应打。
+  // intercept 仅调本插件 logger 的阈值到 2（warn）：cordis 默认阈值 1 按级别过滤会丢弃 warn，
+  // 而预算告警 / 强制 FINALIZE 等重要信号正是 warn 级。
+  const logCtx = ctx.intercept("logger", { level: 2 });
+  const hostLog = logCtx.logger?.("fintrace");
+  rootLogger.level = config.logLevel;
+  setLoggerSink((_line, rec) => {
+    if (!hostLog) return; // 宿主 logger 服务未就绪：丢弃（绝不回写 stdout）
+    const fn =
+      rec.level >= 50 ? "error" : rec.level >= 40 ? "warn" : rec.level >= 30 ? "info" : "debug";
+    const tag = `${rec.sessionId ? `[${rec.sessionId}] ` : ""}[${rec.component ?? "agent"}]`;
+    hostLog[fn](`${tag} ${rec.msg ?? ""}`.trimEnd());
+  });
+
   const sweeper = setInterval(() => sweepTasks(taskStore, config), SWEEP_INTERVAL_MS);
   sweeper.unref?.();
 
@@ -424,6 +448,9 @@ export function apply(ctx: Context, rawConfig?: Record<string, any>) {
       if (task.status === "running") task.abortController.abort();
     }
     taskStore.clear();
+    // 卸载后 sink 改投 no-op 而非还原 stdout：abort 只发信号，在飞行中的循环步骤还会打日志，
+    // 若还原默认出口，这段拆卸窗口的日志会回写宿主终端（one-shot headless 真机验证实测泄漏 4 行）
+    setLoggerSink(() => {});
   });
 
   const jsonText = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }];
