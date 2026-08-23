@@ -19,6 +19,13 @@
               "args": ["${ZCODE_PROJECT_DIR}/.zcode/hooks/block-git-push-main.py"],
               "timeoutMs": 5000,
               "statusMessage": "检查 git push main 拦截规则"
+            },
+            {
+              "type": "process",
+              "command": "python3",
+              "args": ["${ZCODE_PROJECT_DIR}/.zcode/hooks/block-git-commit-main.py"],
+              "timeoutMs": 5000,
+              "statusMessage": "检查 main 分支提交拦截规则"
             }
           ]
         }

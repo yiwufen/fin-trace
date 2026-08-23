@@ -35,6 +35,20 @@ Browser (web app)          Host Agent (OpenClaw)      MCP client
 
 Core constraint: **"Library over framework"** — no agent framework, the loop is entirely in own code.
 
+## 开发任务启动流程（每个开发任务第一步，强制）
+
+任何会修改文件的任务，动手前必须先完成 git 环境准备——不可在 main 上直接开始编辑：
+
+```bash
+git status                                   # 工作区必须干净；有遗留改动先确认归属
+git checkout main && git pull origin main    # 新分支基于最新 main
+git checkout -b <type>/<short-desc>          # feature / fix / chore / docs
+```
+
+- **禁止直接在 main 上开发和提交**：main 是发布通道，只经 PR 合并更新。`.zcode/config.json` 的 PreToolUse hook（`.zcode/hooks/block-git-commit-main.py`）会**硬拦截** main 上的 `git commit` / `merge` / `cherry-pick` / `revert` / `rebase`（`--dry-run` 放行）。
+- **忘切分支的补救**：未提交改动会随 `git checkout -b <branch>` 带到新分支，补切后再提交即可，不丢工作。
+- push 规则不变：只 push 显式命名的 feature 分支，push main / tag 由人工执行（见下文拦截规则）。
+
 ## Build & Test Commands
 
 ```bash
@@ -103,10 +117,11 @@ push main / PR ─→ CI 仅验证（typecheck + docker build）
 - **宿主版本锚定 dsh `0.1.1-rc.2`**：`@deepseek-ai/*` devDeps 固定 exact 并全部打进 dist、不进 dependencies（防止 profile 内双实例分裂 symbol）；宿主升级需重新对齐并回归
 - 完整发布文档：`docs/plugin-release.md`
 
-### git push main 拦截（workspace hook）
+### git 工作流拦截（workspace hooks）
 
-- **push main 由人工执行**：远程 main 是发布通道（deploy / plugin-release 的 tag 都要求打在 main 提交上），ZCode 只负责本地 commit，可 push feature 分支（显式分支名）；所有会更新 main 的 git push 由 `.zcode/config.json` 的 PreToolUse hook（`.zcode/hooks/block-git-push-main.py`）**硬拦截**
-- 拦截范围：目标为 main 的 refspec（`main` / `HEAD:main` / `+main` / `:main` 删除 / `--delete main` / `refs/heads/main`）、`--all` / `--mirror`、以及 main 分支上的裸 `git push` 与 `HEAD`/`@` refspec；`--dry-run` 放行
+- **main 上提交被拦截**：开发必须在 feature 分支上进行（见上文「开发任务启动流程」），`.zcode/hooks/block-git-commit-main.py` **硬拦截** main 分支上的 `git commit` / `merge` / `cherry-pick` / `revert` / `rebase`；`--dry-run` / `-n` 放行，`git pull` 放行（fast-forward 同步属允许的准备工作）
+- **push main 由人工执行**：远程 main 是发布通道（deploy / plugin-release 的 tag 都要求打在 main 提交上），ZCode 只在 feature 分支上本地 commit，可 push feature 分支（显式分支名）；所有会更新 main 的 git push 由 `.zcode/config.json` 的 PreToolUse hook（`.zcode/hooks/block-git-push-main.py`）**硬拦截**
+- push 拦截范围：目标为 main 的 refspec（`main` / `HEAD:main` / `+main` / `:main` 删除 / `--delete main` / `refs/heads/main`）、`--all` / `--mirror`、以及 main 分支上的裸 `git push` 与 `HEAD`/`@` refspec；`--dry-run` 放行
 - 发布 lane 的"push main → push tag"两步由仓库所有者手动完成；hook 不拦 tag 推送（子 shell/续行等混淆写法亦不覆盖——这是工作流护栏，不是安全边界）
 
 ## Design Document Index
