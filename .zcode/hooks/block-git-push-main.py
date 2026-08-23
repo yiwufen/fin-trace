@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash) hook — 拦截 git push 到 main（fin-trace 仓库规则）。
 
-远程 main 是发布通道（deploy / plugin-release 都要求 tag 打在 main 提交上），
-push main 一律由仓库所有者手动执行；ZCode 只负责本地 commit，可以 push feature 分支。
+push main 对所有人禁止（含仓库所有者）：远程 main 是发布通道，只经 PR 合并更新，
+分支 + PR 是影响远程仓库的唯一途径。三层实施中的"ZCode 命令"层，
+另两层为 .githooks/pre-push（本机终端）与 GitHub ruleset（服务端权威拦截）。
 `git push --dry-run` 放行。
 
 拦截范围（所有会更新远端 main 的 push 形式）：
@@ -33,12 +34,12 @@ HEAD_LIKE = {"HEAD", "@", "@{u}", "@{upstream}", "@{push}"}
 
 def deny(reason):
     sys.stderr.write(
-        "[fin-trace 规则] 已拦截 git push 到 main：远程 main 是发布通道，push main 由仓库所有者"
-        "手动执行，ZCode 不直接推送。\n"
+        "[fin-trace 规则] 已拦截 git push 到 main：push main 对所有人禁止（含仓库所有者），\n"
+        "远程 main 只经 PR 合并更新——分支 + PR 是影响远程仓库的唯一途径。\n"
         f"触发：{reason}\n"
-        "feature 分支可以推送（显式分支名，如 git push origin <branch>）；验证可使用 "
-        "git push --dry-run（放行）。\n"
-        "发布流程见 docs/deploy.md、docs/plugin-release.md"
+        "正确流程：git push origin <feature-branch> → GitHub PR 合并 → "
+        "git checkout main && git pull origin main；验证可使用 git push --dry-run（放行）。\n"
+        "发布打 tag 见 docs/deploy.md、docs/plugin-release.md"
         "（本拦截由 .zcode/config.json 的 PreToolUse hook 实施）。\n"
     )
     sys.exit(2)

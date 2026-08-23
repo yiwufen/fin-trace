@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# pre-push hook — 禁止任何人 push 更新/删除 main（fin-trace 仓库规则）。
+#
+# push main 对所有人禁止（含仓库所有者）：远程 main 只经 PR 合并更新，
+# 分支 + PR 是影响远程仓库的唯一途径。三层实施中的"本机终端"层：
+#   - ZCode 命令：.zcode/hooks/block-git-push-main.py（ZCode PreToolUse hook）
+#   - 本机终端：本钩子（git config core.hooksPath .githooks 启用，clone 后需设置一次）
+#   - 服务端：GitHub ruleset main-branch-protection（权威拦截，管理员同受限）
+#
+# stdin 每行: <local-ref> <local-sha> <remote-ref> <remote-sha>
+# tag 推送（v* / plugin-v*）与 feature 分支不受影响。
+# 紧急绕过 git push --no-verify 只跳过本层，服务端 ruleset 仍会拒绝。
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "[fin-trace 规则] 已拦截 push main：push main 对所有人禁止（含仓库所有者），" >&2
+    echo "远程 main 只经 PR 合并更新——分支 + PR 是影响远程仓库的唯一途径。" >&2
+    echo "触发：$local_ref -> $remote_ref" >&2
+    echo "正确流程：git push origin <feature-branch> → GitHub PR 合并 → git checkout main && git pull origin main。" >&2
+    echo "启用说明见 AGENTS.md「git 工作流拦截」；发布打 tag 见 docs/deploy.md、docs/plugin-release.md" >&2
+    exit 1
+  fi
+done
+exit 0
