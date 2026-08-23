@@ -90,7 +90,12 @@ ssh deployer@182.61.1.77 'grep admin_token ~/fin-trace/data/settings.json'
 
 ## 日常发布
 
+**push main 对所有人禁止**（见 AGENTS.md「git 工作流拦截」）：改动一律经分支 + PR 合并进 main，再打 tag。
+
 ```bash
+# 1. 改动在 feature 分支提交 → PR 合并进 main（GitHub UI 或 gh pr merge）
+# 2. 同步本地 main，打 tag 触发部署
+git checkout main && git pull origin main
 git tag vX.Y.Z main && git push origin vX.Y.Z
 ```
 

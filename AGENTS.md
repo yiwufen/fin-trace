@@ -47,7 +47,7 @@ git checkout -b <type>/<short-desc>          # feature / fix / chore / docs
 
 - **禁止直接在 main 上开发和提交**：main 是发布通道，只经 PR 合并更新。`.zcode/config.json` 的 PreToolUse hook（`.zcode/hooks/block-git-commit-main.py`）会**硬拦截** main 上的 `git commit` / `merge` / `cherry-pick` / `revert` / `rebase`（`--dry-run` 放行）。
 - **忘切分支的补救**：未提交改动会随 `git checkout -b <branch>` 带到新分支，补切后再提交即可，不丢工作。
-- push 规则不变：只 push 显式命名的 feature 分支，push main / tag 由人工执行（见下文拦截规则）。
+- push 规则：只 push 显式命名的 feature 分支；**push main 对所有人禁止**（本机 git hook + GitHub ruleset 拦截，含仓库所有者），影响远程 main 的唯一途径是 PR 合并；tag 推送（`v*` / `plugin-v*`）仍由人工执行（见下文拦截规则）。
 
 ## Build & Test Commands
 
@@ -117,12 +117,15 @@ push main / PR ─→ CI 仅验证（typecheck + docker build）
 - **宿主版本锚定 dsh `0.1.1-rc.2`**：`@deepseek-ai/*` devDeps 固定 exact 并全部打进 dist、不进 dependencies（防止 profile 内双实例分裂 symbol）；宿主升级需重新对齐并回归
 - 完整发布文档：`docs/plugin-release.md`
 
-### git 工作流拦截（workspace hooks）
+### git 工作流拦截（对所有人生效）
 
-- **main 上提交被拦截**：开发必须在 feature 分支上进行（见上文「开发任务启动流程」），`.zcode/hooks/block-git-commit-main.py` **硬拦截** main 分支上的 `git commit` / `merge` / `cherry-pick` / `revert` / `rebase`；`--dry-run` / `-n` 放行，`git pull` 放行（fast-forward 同步属允许的准备工作）
-- **push main 由人工执行**：远程 main 是发布通道（deploy / plugin-release 的 tag 都要求打在 main 提交上），ZCode 只在 feature 分支上本地 commit，可 push feature 分支（显式分支名）；所有会更新 main 的 git push 由 `.zcode/config.json` 的 PreToolUse hook（`.zcode/hooks/block-git-push-main.py`）**硬拦截**
-- push 拦截范围：目标为 main 的 refspec（`main` / `HEAD:main` / `+main` / `:main` 删除 / `--delete main` / `refs/heads/main`）、`--all` / `--mirror`、以及 main 分支上的裸 `git push` 与 `HEAD`/`@` refspec；`--dry-run` 放行
-- 发布 lane 的"push main → push tag"两步由仓库所有者手动完成；hook 不拦 tag 推送（子 shell/续行等混淆写法亦不覆盖——这是工作流护栏，不是安全边界）
+- **push main 一律禁止（含仓库所有者）**：远程 main 是发布通道（deploy / plugin-release 的 tag 都要求打在 main 提交上），只经 PR 合并更新——**分支 + PR 是影响远程仓库的唯一途径**。三层实施：
+  - ZCode 命令：`.zcode/config.json` PreToolUse hook（`.zcode/hooks/block-git-push-main.py`）**硬拦截**
+  - 本机终端：`.githooks/pre-push`（`git config core.hooksPath .githooks` 启用；新 clone 后需设置一次）
+  - 服务端：GitHub ruleset `main-branch-protection`（要求 PR 合并、禁删除/强推、无 bypass，管理员同受限）——**权威拦截**，`--no-verify` 绕过本地钩子也会被拒
+- push 拦截范围（两层本地钩子一致）：目标为 main 的 refspec（`main` / `HEAD:main` / `+main` / `:main` 删除 / `--delete main` / `refs/heads/main`）、`--all` / `--mirror`、以及 main 分支上的裸 `git push` 与 `HEAD`/`@` refspec；`--dry-run` 放行（ZCode 层）
+- **main 上提交被拦截**（ZCode 层）：开发必须在 feature 分支上进行（见上文「开发任务启动流程」），`.zcode/hooks/block-git-commit-main.py` **硬拦截** main 分支上的 `git commit` / `merge` / `cherry-pick` / `revert` / `rebase`；`--dry-run` 放行（`-n` 是 `--no-verify`，不放行），`git pull` 放行（fast-forward 同步属允许的准备工作）
+- 发布 lane：分支 → PR 合并 → `git checkout main && git pull origin main` → `git tag vX.Y.Z main && git push origin vX.Y.Z`（tag 推送不拦，仍由人工执行；ruleset 只管分支）；子 shell/续行等混淆写法本地钩子不覆盖——服务端 ruleset 是兜底
 
 ## Design Document Index
 

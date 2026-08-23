@@ -35,14 +35,19 @@ token ... required`），唯一发布通道是 CI（`NPM_TOKEN` granular secret 
 
 ## 日常发布
 
+**push main 对所有人禁止**（见 AGENTS.md「git 工作流拦截」）：改动一律经分支 + PR 合并进 main，再打 tag。
+
 ```bash
 # 1. 改代码 + 更新 packages/dsh-fin-trace/package.json 的 version
 #    （如有需要，同步 README 的版本相关描述）
-# 2. 本地验证（见下节），提交并推送 main
+# 2. 本地验证（见下节），在 feature 分支提交，走 PR 合并进 main
+git checkout -b plugin/x-y-z
 git add packages/dsh-fin-trace/ && git commit -m "feat(plugin): ..."
-git push origin main                      # 触发 plugin-verify（校验 lane）
+git push origin plugin/x-y-z
+gh pr create --fill && gh pr merge --merge   # 合并进 main，触发 plugin-verify（校验 lane）
 
-# 3. 确认 plugin-verify / CI 绿后打 tag 发布
+# 3. 确认 plugin-verify / CI 绿后，同步 main 打 tag 发布
+git checkout main && git pull origin main
 git tag plugin-vX.Y.Z && git push origin plugin-vX.Y.Z   # 触发 plugin-release
 
 # 4. 确认
