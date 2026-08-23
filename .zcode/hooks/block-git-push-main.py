@@ -8,7 +8,7 @@ push main 一律由仓库所有者手动执行；ZCode 只负责本地 commit，
 拦截范围（所有会更新远端 main 的 push 形式）：
   - refspec 目标为 main：main / HEAD:main / +main / :main（删除）/ --delete main / refs/heads/main
   - --all / --mirror（推全部分支）
-  - 裸 `git push` 或 HEAD/@/@{u}/@{push} refspec（解析为当前分支，按当前分支是否 main 判定）
+  - 裸 `git push`，或 refspec 目标（dst）为 HEAD/@/@{u}/@{push}（解析为当前分支，按当前分支是否 main 判定）
 已知局限（工作流护栏，非安全边界）：子 shell / 续行等混淆写法、tag 推送（v* / plugin-v*）不拦截。
 
 退出码契约（PreToolUse）：0 放行，2 拦截（deny），其他非零为错误。
@@ -125,7 +125,8 @@ def analyze_push(tokens):
             dst = dst[len("refs/heads/"):]
         if dst == PROTECTED:
             return f"refspec {spec}（目标为 main）"
-        if src in HEAD_LIKE or dst in HEAD_LIKE:
+        # refspec 只有 dst 决定更新哪个远端分支；src 为 HEAD/@ 只是引用当前分支的提交
+        if dst in HEAD_LIKE:
             if current_branch() == PROTECTED:
                 return f"refspec {spec}（解析为当前分支，当前在 main）"
     return None
