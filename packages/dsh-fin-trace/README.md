@@ -88,7 +88,13 @@ kg:
 maxConcurrentTasks: 2         # 并发上限（每任务占一条 3-20 分钟的 KG 长连接）
 taskTtlMinutes: 60            # 终态任务保留时长
 runningTimeoutMinutes: 30     # 运行超时（超时中止并标记 failed）
+logLevel: info                # debug | info | warn | error —— agent 循环日志级别
 ```
+
+日志不写宿主进程 stdout（dsh 自身不打 stdout，插件同样不打）：agent 循环的 pino 日志在
+`apply()` 内整体改道进宿主 `ctx.logger`（cordis LoggerService，logger 名 `fintrace`），
+与 dsh 自身日志同通道（内存环形缓冲 + 宿主注册的 exporter）；排查问题时调高
+`logLevel: debug` 即可在宿主日志里看到完整循环轨迹。
 
 在 profile 的用户 patch 层（`~/.dsh/profiles/<name>/cordis.patch.yml`）可按 id 覆盖本插件配置，
 无需改包：
