@@ -6,7 +6,7 @@
 
 <h1 align="center">Graph Explorer</h1>
 <h3 align="center">金融知识图谱上的多跳推理 Agent</h3>
-<p align="center">Web 应用 · A2A Agent · MCP 服务 &nbsp;·&nbsp; 自主探索 &nbsp;·&nbsp; 每一步都有 KU ID 可查证</p>
+<p align="center">Web 应用 · A2A Agent · MCP 服务 · dsh 插件 &nbsp;·&nbsp; 自主探索 &nbsp;·&nbsp; 每一步都有 KU ID 可查证</p>
 
 ---
 
@@ -45,6 +45,11 @@ Graph Explorer 以一个进程（:3001）同时提供四种接口：
 | **A2A Agent** | `graph_explore` skill，Agent Card 见 `/.well-known/agent-card.json`，供 Host Agent（如 OpenClaw）异步调用 |
 | **MCP 服务** | `/mcp` 暴露 `graph_explore_start/status/cancel`（异步提交 + 轮询） |
 | **HTTP API** | `/api/*`，驱动 Web 前端（认证、会话、管理、分享、设置） |
+
+除自部署进程外，Agent Loop 核心还以 **dsh 插件**（npm 包
+[`@lihangcz/dsh-fin-trace`](https://www.npmjs.com/package/@lihangcz/dsh-fin-trace)）分发——嵌入
+[DeepSeek Harness (dsh)](https://deepseek.com/harness/en/) 宿主进程运行，无需自建服务（见下文
+[30 秒开始](#30-秒开始)）。
 
 本文档其余部分聚焦核心：多跳探索 Agent 本身。
 
@@ -150,6 +155,18 @@ fin-trace 是 A2A Agent，暴露 Agent Card 供 Host Agent 自动发现。启动
 GET  http://localhost:3001/.well-known/agent-card.json   # Agent Card
 POST http://localhost:3001/a2a                            # A2A JSON-RPC
 ```
+
+**dsh 插件安装**（终端 Agent，免部署）
+
+Agent Loop 核心已打包为 npm 插件，一条命令装进 [DeepSeek Harness (dsh)](https://deepseek.com/harness/en/) 宿主：
+
+```bash
+dsh plugin --profile web add @lihangcz/dsh-fin-trace   # 安装后重启 dsh 生效
+```
+
+- 工具三件套 `fintrace_explore_start / status / cancel`：任务后台运行（depth=1 约 3-5 分钟），完成时经宿主后台 job 自动唤醒 agent；web profile 附实时探索面板
+- 配置：在 dsh 插件配置面板填入 KG / LLM 的 API key（默认端点 `https://kg.yiyiyiwufeng.cn/mcp` 需鉴权）
+- 完整说明（工具语义、配置项、网络出口披露）见 [`packages/dsh-fin-trace/README.md`](packages/dsh-fin-trace/README.md)
 
 **直接连接知识图谱**（调试用）
 
@@ -349,6 +366,7 @@ src/
 ├── llm/                  # LLM 客户端（OpenAI-compatible）
 └── tool-categories.ts
 web/                      # 前端 workspace（Vite + React + Tailwind，PWA）
+packages/                 # dsh 插件包 @lihangcz/dsh-fin-trace（独立 npm 发布 lane，不走 workspace）
 eval/                     # Golden set 评测框架（run | judge | report）
 tests/e2e/                # 冒烟场景（捕获输出）
 design-docs/              # 核心设计文档

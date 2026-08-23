@@ -7,9 +7,10 @@ import { MessageBubble } from "./MessageBubble";
  * 公开落地页（未登录访客的首屏）。
  * 目的：先传递价值，再引导注册/登录——替代过去"一进 / 就撞登录表单"的体验。
  *
- * 区块：顶部导航 + Hero + 能力卡片 + 真实案例 Demo + 底部 CTA。
+ * 区块：顶部导航 + Hero + 能力卡片 + 真实案例 Demo + dsh 插件 + 底部 CTA。
  * - 已登录用户访问 / 时，App.tsx 的 RootRedirect 会先 replace 到 /app，不会看到本页。
  * - Demo 区块依赖管理员配置 demo_session_id；未配置时降级为静态示例卡片。
+ * - dsh 插件区块为静态内容（安装命令 + 工具三件套），无接口依赖。
  */
 export function Landing() {
   const [config, setConfig] = useState<AccountConfig | null>(null);
@@ -101,6 +102,11 @@ export function Landing() {
           expanded={demoExpanded}
           onToggle={() => setDemoExpanded((v) => !v)}
         />
+      </section>
+
+      {/* ─── dsh 插件（终端形态）─── */}
+      <section className="max-w-3xl mx-auto px-4 pb-12">
+        <PluginSection />
       </section>
 
       {/* ─── 底部 CTA ─── */}
@@ -227,6 +233,105 @@ function DemoSection({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── dsh 插件区块：终端 Agent 形态的安装引导（静态内容）───
+
+const DSH_INSTALL_CMD = "dsh plugin --profile web add @lihangcz/dsh-fin-trace";
+
+const DSH_TOOLS = [
+  { name: "fintrace_explore_start", desc: "提交探索任务，立即返回 task_id，后台运行不阻塞会话" },
+  { name: "fintrace_explore_status", desc: "查询进度 / 读取终态结果（findings · event_threads）" },
+  { name: "fintrace_explore_cancel", desc: "取消任务，优雅收尾并保留已产出的发现" },
+];
+
+function PluginSection() {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(DSH_INSTALL_CMD);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 剪贴板不可用（非安全上下文等）时静默降级为手动选中复制
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div className="p-5 border-b border-gray-100">
+        <div className="flex items-center gap-2 text-xs text-blue-600 mb-1.5">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 9l3 3-3 3m5 0h3M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z"
+            />
+          </svg>
+          <span>dsh 插件</span>
+        </div>
+        <h2 className="text-base font-semibold text-gray-800">也可以在终端 Agent 里直接用</h2>
+        <p className="mt-1.5 text-xs text-gray-500 leading-relaxed">
+          推理内核已发布为 npm 插件 <code className="font-mono text-gray-700">@lihangcz/dsh-fin-trace</code>，
+          嵌入 DeepSeek Harness（dsh）宿主运行——同一套探索循环，任务后台执行、完成自动唤醒，
+          web profile 自带实时探索面板。
+        </p>
+      </div>
+
+      <div className="p-5 space-y-3">
+        {/* 安装命令（终端样式代码块 + 复制） */}
+        <div className="flex items-center gap-2 bg-gray-800 rounded-lg pl-3 pr-2 py-2.5">
+          <code className="flex-1 min-w-0 text-xs font-mono text-gray-100 overflow-x-auto whitespace-nowrap">
+            <span className="select-none text-gray-500">$&nbsp;</span>
+            {DSH_INSTALL_CMD}
+          </code>
+          <button
+            onClick={handleCopy}
+            className="shrink-0 text-xs text-gray-300 hover:text-white bg-white/10 hover:bg-white/20 rounded-md px-2 py-1 transition-colors"
+          >
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
+        <p className="text-xs text-gray-400">
+          安装后重启 dsh 生效；在插件配置里填入知识图谱与 LLM 的 API key 即可开始探索。
+        </p>
+
+        {/* 工具三件套 */}
+        <ul className="space-y-1.5 pt-1">
+          {DSH_TOOLS.map((t) => (
+            <li
+              key={t.name}
+              className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-2 text-xs"
+            >
+              <code className="font-mono text-blue-600 shrink-0">{t.name}</code>
+              <span className="text-gray-500">{t.desc}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="flex flex-wrap items-center gap-4 pt-1 text-xs">
+          <a
+            href="https://www.npmjs.com/package/@lihangcz/dsh-fin-trace"
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 hover:text-blue-700 font-medium"
+          >
+            npm 包主页 ↗
+          </a>
+          <a
+            href="https://github.com/yiwufen/fin-trace/tree/main/packages/dsh-fin-trace"
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 hover:text-blue-700 font-medium"
+          >
+            安装与配置文档 ↗
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
