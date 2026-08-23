@@ -1,6 +1,6 @@
 # Agent Loop — Phase 状态机与流程
 
-> 状态: 已实现（v3 五意图架构） | 已对齐: 2177de2 (2026-08-22)
+> 状态: 已实现（v3 五意图架构） | 已对齐: ee4016c (2026-08-23)
 >
 > 源码: `src/agent/loop.ts`（主循环 + Phase 切换）、`src/agent/error-handler.ts`
 > （决策校验/终止信号/循环检测）。上下文组装见 [context-assembly.md](context-assembly.md)，
@@ -44,6 +44,17 @@
 | `llmConfig` | 循环内部直读的 `model` / `max_tokens`（initState 预算、主 LLM 调用、事件分类） |
 
 不传时与文件配置路径（`config.json` → `createLlmClient()` / `new KgMcpClient()`）行为完全一致，服务器侧 7 个调用点无感。
+
+#### 日志改道（嵌入式宿主）
+
+循环内部日志走 `src/logger.ts` 的 pino root（`createLogger("agent-loop")` 等），默认出口为进程 stdout。嵌入式宿主与宿主同进程，写 stdout 会直接打进出宿主终端，因此 root logger 固定写在一个可改道的 proxy stream 上：
+
+| API | 说明 |
+|------|------|
+| `setLoggerSink(sink)` | 运行期整体改道；sink 收到序列化 JSON 行 + 解析后记录（含 pino 数值 `level`、`component`、可选 `sessionId`） |
+| `resetLoggerSink()` | 还原默认 stdout 出口（通用 API；dsh 插件卸载时**不**用它，而是改投 no-op——abort 只发信号，拆卸窗口内飞行中步骤的日志若还原默认出口会回写宿主终端） |
+
+不调用时与原行为一致（stdout，开发环境 pino-pretty 由 worker transport 改为内联流，输出等价）。dsh 插件在 `apply()` 里将出口转发进宿主 `ctx.logger`（cordis LoggerService，名 `fintrace`），级别映射 info/warn/error/debug 一对一，级别阈值经插件配置 `logLevel` 控制；详见 `packages/dsh-fin-trace/README.md`。
 
 ---
 
