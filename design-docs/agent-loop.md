@@ -1,6 +1,6 @@
 # Agent Loop — Phase 状态机与流程
 
-> 状态: 已实现（v3 五意图架构） | 已对齐: ee4016c (2026-08-23)
+> 状态: 已实现（v3 五意图架构 + v3.4 LLM API 故障分流） | 已对齐: 15ec8d9 (2026-11-10)
 >
 > 源码: `src/agent/loop.ts`（主循环 + Phase 切换）、`src/agent/error-handler.ts`
 > （决策校验/终止信号/循环检测）。上下文组装见 [context-assembly.md](context-assembly.md)，
@@ -150,6 +150,21 @@ LLM 认为信息充足时，代码强制校验三关，任一不过 → 继续�
 
 Thread 验证规则（ku_id 存在性、时序、类型钳制、长度警告、索引重算）见
 [event-threads.md](event-threads.md)。
+
+### LLM API 故障分流（v3.4）
+
+内层 `llm.messages.create` 失败时先经 `src/llm/errors.ts` 的 `classifyLlmError` 归因：
+
+- **确定性故障**（auth_invalid / quota_exhausted / model_not_found / network_unreachable）：
+  不进入 `consecutiveFormatErrors` 重试，立即终止探索——`final_findings = 去重(key_insights)`、
+  `threads=[]`、`reliability_note="模型服务不可用：{可读原因}"`，并经 `onStep` 发出
+  `type:"error"` 事件（含「当前模型不可用：{原因}」），让外层 LLM 拿到 `is_error`
+  tool_result 并向用户说明。
+- **瞬态故障**（timeout / rate_limited / unknown）：维持既有重试/降级语义
+  （连续 2 次失败 → FINALIZE / FINALIZE 阶段失败 → 降级输出）。
+
+原始 SDK 错误只写入服务端日志（`sl.error`）；用户可见文案只取映射后的中文短语。
+
 
 ---
 

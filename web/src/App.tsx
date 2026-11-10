@@ -310,12 +310,16 @@ export default function App() {
         finishTurn(sessionId);
       },
 
-      onError: (error) => {
+      onError: (error, kind) => {
         const d = sessionsRef.current.get(sessionId);
         if (!d) return;
+        // LLM 故障：服务端已归因，展示「当前模型不可用 + 可读原因」，不拼接原始 SDK 报错
+        const text = kind
+          ? `当前模型不可用：${error.replace(/^当前模型不可用：/, "")}`
+          : `处理出错：${error}`;
         const errMsg: ChatMessage = {
           role: "assistant",
-          content: `处理出错：${error}`,
+          content: text,
           created_at: new Date().toISOString(),
         };
         d.messages.push(errMsg);

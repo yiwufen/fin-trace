@@ -58,6 +58,7 @@ import { listUsers, disableUser, setUserQuota, deleteUser, setUserPassword } fro
 import { hashPassword } from "./auth/password.js";
 import { handleAccount } from "./account-handler.js";
 import { handleUserMessage } from "./chat/loop.js";
+import { llmErrorSSEPayload } from "./llm/errors.js";
 import type { ChatMessage } from "./chat/types.js";
 import { readSettings, writeSettings } from "./settings-store.js";
 import type { SettingsStore } from "./settings-store.js";
@@ -492,8 +493,10 @@ async function handleExplore(
     })
     .catch(async (err) => {
       log.error({ err, sessionId }, "探索失败");
-      await failExploration(sessionId, exploration.id, String(err?.message ?? err));
-      broadcastSSE(sessionId, "error", { exploration_id: exploration.id, error: String(err?.message ?? err) });
+      const errPayload = llmErrorSSEPayload(err);
+      const message = errPayload?.error ?? String(err?.message ?? err);
+      await failExploration(sessionId, exploration.id, message);
+      broadcastSSE(sessionId, "error", { exploration_id: exploration.id, ...(errPayload ?? { error: message }) });
     })
     .finally(() => {
       runningExplorations.delete(sessionId);
@@ -588,8 +591,10 @@ async function handleFollowup(
     })
     .catch(async (err) => {
       log.error({ err, sessionId }, "追问失败");
-      await failExploration(sessionId, exploration.id, String(err?.message ?? err));
-      broadcastSSE(sessionId, "error", { exploration_id: exploration.id, error: String(err?.message ?? err) });
+      const errPayload = llmErrorSSEPayload(err);
+      const message = errPayload?.error ?? String(err?.message ?? err);
+      await failExploration(sessionId, exploration.id, message);
+      broadcastSSE(sessionId, "error", { exploration_id: exploration.id, ...(errPayload ?? { error: message }) });
     })
     .finally(() => {
       runningExplorations.delete(sessionId);
@@ -1013,7 +1018,9 @@ export async function handleChat(
     })
     .catch(async (err) => {
       log.error({ err, sessionId }, "聊天处理失败");
-      broadcastSSE(sessionId, "error", {
+      // LLM 故障：归因为人类可读原因（原始 SDK 错误只留在上方日志）；
+      // 非 LLM 错误保持原有 String(message) 兜底
+      broadcastSSE(sessionId, "error", llmErrorSSEPayload(err) ?? {
         error: String((err as Error)?.message ?? err),
       });
     })
