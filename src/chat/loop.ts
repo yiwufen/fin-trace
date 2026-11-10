@@ -18,10 +18,14 @@ import type { ChatMessage, ContentBlock, TextBlock, ToolUseBlock, ToolResultBloc
 import { getSystemPrompt, getEnvironmentContext, type ChatMode } from "./prompt.js";
 import { formatExplorationResult } from "./result-formatter.js";
 import { createLlmClient } from "../llm/client.js";
+import { toLlmApiError } from "../llm/errors.js";
+import { createLogger } from "../logger.js";
 import { readConfig } from "../agent/config.js";
 import { runExploration } from "../agent/loop.js";
 import type { StepEvent, ExplorationInput } from "../agent/state.js";
 import { categorize } from "../tool-categories.js";
+
+const log = createLogger("chat");
 import type {
   Tool,
   MessageParam,
@@ -212,8 +216,9 @@ async function runOuterTurn(
     try {
       finalMessage = await stream.finalMessage();
     } catch (err) {
-      const errorMsg = String((err as Error)?.message ?? err);
-      throw err;
+      // 原始 SDK 错误只进服务端日志；向上抛结构化 LlmApiError（kind + 人类可读原因）
+      log.error({ err }, "外层 LLM 流式调用失败");
+      throw toLlmApiError(err);
     }
 
     // 分离 text 和 tool_use 块

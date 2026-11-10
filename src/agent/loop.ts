@@ -54,6 +54,7 @@ import {
 import { validateThreads } from "./threads.js";
 import { readConfig, type LlmConfig } from "./config.js";
 import { createLlmClient, type LlmClient } from "../llm/client.js";
+import { classifyLlmError, isDeterministicLlmFailure, MODEL_UNAVAILABLE_PREFIX } from "../llm/errors.js";
 import type { MessageParam } from "../llm/types.js";
 import { categorize } from "../tool-categories.js";
 import { createLogger } from "../logger.js";
@@ -1123,6 +1124,21 @@ export async function runExploration(
         state.budget.used_tokens += inputTokens + outputTokens;
       } catch (err) {
         sl.error({ err, phase: state.phase }, "LLM 调用失败");
+        // 确定性故障（密钥无效/额度耗尽/模型不存在/网络不可达）：重试必然失败，
+        // 立即终止探索并透出可读原因；timeout/rate_limited/unknown 维持既有重试/降级语义
+        const { kind, userMessage } = classifyLlmError(err);
+        if (isDeterministicLlmFailure(kind)) {
+          state.reliability_note = `模型服务不可用：${userMessage}`;
+          state.final_findings = deduplicateFindings(state.key_insights);
+          state.event_threads = [];
+          onStep?.({
+            type: "error",
+            step: state.step_count,
+            phase: state.phase,
+            error: `${MODEL_UNAVAILABLE_PREFIX}：${userMessage}`,
+          });
+          break;
+        }
         if (state.phase === "FINALIZE") {
           state.reliability_note = "FINALIZE LLM 调用失败，使用原始 findings，无 Event Thread";
           state.final_findings = deduplicateFindings(state.key_insights);

@@ -164,6 +164,9 @@ export function openAiStreamToAnthropic(
   let finalInputTokens = 0;
   let finalOutputTokens = 0;
   let streamDone = false;
+  // 流式错误必须透传给 finalMessage()（认证失败/额度耗尽/网络故障等），
+  // 不能吞掉——否则 chat 外层拿到空消息，用户端表现为无限等待。
+  let streamError: unknown = undefined;
   let resolveFinal: ((msg: Message) => void) | undefined;
   let finalMessagePromise: Promise<Message> | undefined;
 
@@ -205,18 +208,24 @@ export function openAiStreamToAnthropic(
           finalOutputTokens = chunk.usage.completion_tokens ?? 0;
         }
       }
-    } catch {
-      // stream error — 返回已有内容
+    } catch (err) {
+      // stream error — 记录并透传（拒收 finalMessage），调用方据此归因故障
+      streamError = err;
     } finally {
       streamDone = true;
     }
   })();
 
-  finalMessagePromise = new Promise<Message>((resolve) => {
+  finalMessagePromise = new Promise<Message>((resolve, reject) => {
     resolveFinal = resolve;
     // 轮询直到 stream 结束
     const check = () => {
       if (streamDone) {
+        // 流式错误 → 拒绝，携带原始 SDK 错误
+        if (streamError !== undefined) {
+          reject(streamError);
+          return;
+        }
         const content: (TextBlock | ToolUseBlock)[] = [];
         if (collectedText) {
           content.push({ type: "text", text: collectedText });

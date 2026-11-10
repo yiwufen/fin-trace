@@ -226,7 +226,7 @@ export interface ChatSSEHandlers {
   onFinalize: (event: unknown) => void;
   /** 探索/聊天 turn 完成。payload.messages 为后端权威最终消息（可能缺失）。 */
   onMessageComplete: (payload?: { messages?: ChatMessage[] }) => void;
-  onError: (error: string) => void;
+  onError: (error: string, kind?: string) => void;
   onConnectionLost?: () => void;
 }
 
@@ -270,16 +270,23 @@ export function createChatSSEConnection(
   });
 
   es.addEventListener("error", (e) => {
+    // 服务端命名的 error 事件是 MessageEvent 且携带 JSON payload（{ error, kind }），
+    // 与 EventSource 连接层错误（无 data、readyState 变化）明确区分
+    if (e instanceof MessageEvent && typeof e.data === "string" && e.data.length > 0) {
+      try {
+        const data = JSON.parse(e.data) as { error?: string; kind?: string };
+        if (data?.error) {
+          handlers.onError(data.error, data.kind);
+          return;
+        }
+      } catch {
+        // payload 非法 — 视为连接层错误，落到下方处理
+      }
+    }
     if (es.readyState === EventSource.CLOSED) {
       handlers.onConnectionLost?.();
-      return;
     }
-    try {
-      const data = e instanceof MessageEvent ? JSON.parse(e.data) : null;
-      if (data?.error) handlers.onError(data.error);
-    } catch {
-      // 连接层面错误 — EventSource 可能正在重连
-    }
+    // 连接层错误（EventSource 自动重连中）— 忽略
   });
 
   return es;
@@ -428,16 +435,23 @@ export function createPublicSSEConnection(
   });
 
   es.addEventListener("error", (e) => {
+    // 服务端命名的 error 事件是 MessageEvent 且携带 JSON payload（{ error, kind }），
+    // 与 EventSource 连接层错误（无 data、readyState 变化）明确区分
+    if (e instanceof MessageEvent && typeof e.data === "string" && e.data.length > 0) {
+      try {
+        const data = JSON.parse(e.data) as { error?: string; kind?: string };
+        if (data?.error) {
+          handlers.onError(data.error, data.kind);
+          return;
+        }
+      } catch {
+        // payload 非法 — 视为连接层错误，落到下方处理
+      }
+    }
     if (es.readyState === EventSource.CLOSED) {
       handlers.onConnectionLost?.();
-      return;
     }
-    try {
-      const data = e instanceof MessageEvent ? JSON.parse(e.data) : null;
-      if (data?.error) handlers.onError(data.error);
-    } catch {
-      // 连接层面错误
-    }
+    // 连接层错误（EventSource 自动重连中）— 忽略
   });
 
   return es;
@@ -629,16 +643,23 @@ export function createUserSSEConnection(sessionId: string, handlers: ChatSSEHand
     handlers.onMessageComplete(payload);
   });
   es.addEventListener("error", (e) => {
+    // 服务端命名的 error 事件是 MessageEvent 且携带 JSON payload（{ error, kind }），
+    // 与 EventSource 连接层错误（无 data、readyState 变化）明确区分
+    if (e instanceof MessageEvent && typeof e.data === "string" && e.data.length > 0) {
+      try {
+        const data = JSON.parse(e.data) as { error?: string; kind?: string };
+        if (data?.error) {
+          handlers.onError(data.error, data.kind);
+          return;
+        }
+      } catch {
+        // payload 非法 — 视为连接层错误，落到下方处理
+      }
+    }
     if (es.readyState === EventSource.CLOSED) {
       handlers.onConnectionLost?.();
-      return;
     }
-    try {
-      const data = e instanceof MessageEvent ? JSON.parse(e.data) : null;
-      if (data?.error) handlers.onError(data.error);
-    } catch {
-      // 连接层面错误 — EventSource 可能正在重连
-    }
+    // 连接层错误（EventSource 自动重连中）— 忽略
   });
   return es;
 }

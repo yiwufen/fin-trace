@@ -186,15 +186,17 @@ export function UserApp() {
         }
         finishTurn(sessionId);
       },
-      onError: (error) => {
+      onError: (error, kind) => {
         const d = sessionsRef.current.get(sessionId);
         if (!d) return;
-        const errMsg: ChatMessage = { role: "assistant", content: `处理出错：${error}`, created_at: new Date().toISOString() };
+        // LLM 故障：展示「当前模型不可用 + 可读原因」，不拼接原始 SDK 报错
+        const text = kind
+          ? `当前模型不可用：${error.replace(/^当前模型不可用：/, "")}`
+          : `处理出错：${error}`;
+        const errMsg: ChatMessage = { role: "assistant", content: text, created_at: new Date().toISOString() };
         d.messages.push(errMsg);
-        if (d.es) { d.es.close(); d.es = null; }
-        d.isProcessing = false;
-        d.reconnecting = false;
-        d.segments = [];
+        // turn 结束：清除处理中状态，恢复输入框
+        finishTurn(sessionId);
         syncView(sessionId);
         refreshUser();
       },
