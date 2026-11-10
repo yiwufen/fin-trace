@@ -1,6 +1,6 @@
 # Agent Loop — Phase 状态机与流程
 
-> 状态: 已实现（v3 五意图架构 + v3.4 LLM API 故障分流） | 已对齐: 15ec8d9 (2026-11-10)
+> 状态: 已实现（v3 五意图架构 + v3.4 LLM API 故障分流） | 已对齐: 9645b95 (2026-11-10)
 >
 > 源码: `src/agent/loop.ts`（主循环 + Phase 切换）、`src/agent/error-handler.ts`
 > （决策校验/终止信号/循环检测）。上下文组装见 [context-assembly.md](context-assembly.md)，
