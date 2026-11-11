@@ -24,7 +24,7 @@ export function SessionList({ sessions, activeId, onSelect, onCreate, onDelete, 
           + 新会话
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto scrollbar-none">
         {sessions.length === 0 ? (
           <div className="p-4 text-sm text-gray-400 text-center">暂无会话</div>
         ) : (

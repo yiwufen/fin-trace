@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+/* 仅视觉隐藏滚动条（issue #25）：滚动行为保留，仅作用于带 .scrollbar-none 的容器，
+   不影响弹窗等其他可滚动区域 */
+.scrollbar-none {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* 旧版 IE/Edge */
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}

@@ -37,7 +37,7 @@ export function ChatView({
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain scrollbar-none">
         {!hasMessages && !isProcessing ? (
           <EmptyState />
         ) : (
