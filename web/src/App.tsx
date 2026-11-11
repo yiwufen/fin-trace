@@ -597,6 +597,7 @@ export default function App() {
           onCreate={handleCreate}
           onDelete={handleDelete}
           onRename={handleRename}
+          onRefresh={refreshSessions}
         />
         <main className="flex-1 flex flex-col min-w-0">
           {/* 顶栏 — 移动端汉堡 + 设置 + 分享入口 */}

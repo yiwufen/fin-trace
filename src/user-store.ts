@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  createSession, getSession, deleteSession, appendChatMessages,
+  createSession, getSession, deleteSession, archiveSession, restoreSession, appendChatMessages,
 } from "./session-store.js";
 import type { Session } from "./session-store.js";
 import { createLogger } from "./logger.js";
@@ -192,24 +192,68 @@ export async function createUserSession(userId: string, title?: string): Promise
 /**
  * 获取用户的所有会话摘要（不含 messages 全文）
  */
-export async function listUserSessions(userId: string): Promise<{ id: string; title: string; created_at: string; updated_at: string; message_count: number }[]> {
+export async function listUserSessions(userId: string, includeArchived = false): Promise<{ id: string; title: string; created_at: string; updated_at: string; message_count: number; archived_at?: string }[]> {
   const u = getUser(userId);
   if (!u) return [];
 
-  const result: { id: string; title: string; created_at: string; updated_at: string; message_count: number }[] = [];
+  const result: { id: string; title: string; created_at: string; updated_at: string; message_count: number; archived_at?: string }[] = [];
   for (const sid of u.session_ids) {
     const s = await getSession(sid);
     if (s) {
+      // 主列表默认排除归档会话
+      if (!includeArchived && s.archived) continue;
       result.push({
         id: s.id,
         title: s.title,
         created_at: s.created_at,
         updated_at: s.updated_at,
         message_count: (s.messages ?? []).length,
+        archived_at: s.archived_at,
       });
     }
   }
   return result.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+}
+
+/** 获取用户的归档会话摘要，按归档时间倒序 */
+export async function listArchivedUserSessions(userId: string): Promise<{ id: string; title: string; created_at: string; updated_at: string; message_count: number; archived_at?: string }[]> {
+  const all = await listUserSessions(userId, true);
+  return all
+    .filter((s) => s.archived_at)
+    .sort((a, b) => new Date(b.archived_at!).getTime() - new Date(a.archived_at!).getTime());
+}
+
+/**
+ * 归档用户指定会话（校验归属）。数据保留，仅从主列表隐藏。
+ * 首个会话（默认会话）不可归档，与删除行为一致。
+ */
+export async function archiveUserSession(userId: string, sessionId: string): Promise<boolean> {
+  const store = readStore();
+  const u = store.users.find((x) => x.id === userId);
+  if (!u) return false;
+  const idx = u.session_ids.indexOf(sessionId);
+  if (idx === -1) return false;
+  if (idx === 0) return false;
+
+  const archived = await archiveSession(sessionId);
+  if (!archived) return false;
+  log.info({ userId, sessionId }, "用户归档会话");
+  return true;
+}
+
+/**
+ * 恢复用户指定的归档会话（校验归属），恢复后按最近更新回到主列表顶部。
+ */
+export async function restoreUserSession(userId: string, sessionId: string): Promise<boolean> {
+  const store = readStore();
+  const u = store.users.find((x) => x.id === userId);
+  if (!u) return false;
+  if (!u.session_ids.includes(sessionId)) return false;
+
+  const restored = await restoreSession(sessionId);
+  if (!restored) return false;
+  log.info({ userId, sessionId }, "用户恢复归档会话");
+  return true;
 }
 
 /**

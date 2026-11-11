@@ -95,6 +95,11 @@ export async function listSessions(): Promise<SessionSummary[]> {
   return request("/sessions");
 }
 
+/** 归档会话列表 */
+export async function listArchivedSessions(): Promise<SessionSummary[]> {
+  return request("/sessions?archived=true");
+}
+
 export async function createSession(title?: string): Promise<Session> {
   return request("/sessions", {
     method: "POST",
@@ -113,8 +118,14 @@ export async function updateSession(id: string, patch: { title?: string }): Prom
   });
 }
 
+/** 归档会话（数据保留，从主列表隐藏） */
 export async function deleteSession(id: string): Promise<void> {
   return request(`/sessions/${id}`, { method: "DELETE" });
+}
+
+/** 恢复归档会话（回到主列表） */
+export async function restoreSession(id: string): Promise<Session> {
+  return request(`/sessions/${id}/restore`, { method: "POST" });
 }
 
 // ─── 探索 ───
@@ -599,9 +610,19 @@ export async function getUserSessionMessages(sessionId: string): Promise<{ messa
   return accountRequest(`/sessions/${sessionId}/messages`);
 }
 
-/** 删除用户会话 */
+/** 归档用户会话（数据保留，从主列表隐藏） */
 export async function deleteUserSessionApi(sessionId: string): Promise<{ ok: boolean }> {
   return accountRequest(`/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+/** 恢复用户归档会话 */
+export async function restoreUserSessionApi(sessionId: string): Promise<{ ok: boolean }> {
+  return accountRequest(`/sessions/${sessionId}/restore`, { method: "POST" });
+}
+
+/** 用户归档会话列表 */
+export async function listArchivedUserSessionsApi(): Promise<SessionSummary[]> {
+  return accountRequest("/sessions?archived=true");
 }
 
 /** 查询会话是否仍在处理（断线恢复用） */

@@ -12,7 +12,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   findUserByEmail, getUser, createUser, listUsers,
   incrementUserUsage, disableUser, setUserQuota, deleteUser,
-  createUserSession, listUserSessions, getUserSession, deleteUserSession,
+  createUserSession, listUserSessions, listArchivedUserSessions,
+  archiveUserSession, restoreUserSession,
+  getUserSession, deleteUserSession,
   type User,
 } from "./user-store.js";
 import { hashPassword, verifyPassword, validatePasswordStrength } from "./auth/password.js";
@@ -138,10 +140,13 @@ export async function handleAccount(req: IncomingMessage, res: ServerResponse): 
 
   // ─── 用户会话管理 ───
 
-  // GET /api/account/sessions — 列表
+  // GET /api/account/sessions — 列表（?archived=true 返回归档列表）
   const sessionsListMatch = path === "/api/account/sessions";
   if (sessionsListMatch && req.method === "GET") {
-    const sessions = await listUserSessions(user.id);
+    const wantArchived = url.includes("archived=true");
+    const sessions = wantArchived
+      ? await listArchivedUserSessions(user.id)
+      : await listUserSessions(user.id);
     res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
     res.end(JSON.stringify(sessions));
     return;
@@ -343,11 +348,22 @@ async function handleSessionAction(
     return;
   }
 
-  // DELETE /api/account/sessions/:id — 删除会话（首个不可删）
+  // DELETE /api/account/sessions/:id — 归档会话（复用 session-store 的 archiveSession，首个不可归档）
   if (!sub && req.method === "DELETE") {
-    const ok = await deleteUserSession(user.id, sessionId);
+    const ok = await archiveUserSession(user.id, sessionId);
     if (!ok) {
-      sendJSON(res, 404, { error: "会话不存在或不可删除" });
+      sendJSON(res, 404, { error: "会话不存在或不可归档" });
+      return;
+    }
+    sendJSON(res, 200, { ok: true });
+    return;
+  }
+
+  // POST /api/account/sessions/:id/restore — 恢复归档会话
+  if (sub === "restore" && req.method === "POST") {
+    const ok = await restoreUserSession(user.id, sessionId);
+    if (!ok) {
+      sendJSON(res, 404, { error: "会话不存在或不可恢复" });
       return;
     }
     sendJSON(res, 200, { ok: true });

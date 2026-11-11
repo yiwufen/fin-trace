@@ -1,6 +1,9 @@
 import { useState } from "react";
 import type { SessionSummary } from "../types";
-import { updateSession } from "../api";
+import { updateSession, listArchivedSessions, restoreSession } from "../api";
+
+// 归档列表分页：首次 5 条，每次「显示更多」追加 5 条
+const ARCHIVE_PAGE_SIZE = 5;
 
 interface Props {
   sessions: SessionSummary[];
@@ -9,10 +12,32 @@ interface Props {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onRefresh?: () => void;
   sidebarOpen?: boolean;
 }
 
-export function SessionList({ sessions, activeId, onSelect, onCreate, onDelete, onRename, sidebarOpen = true }: Props) {
+export function SessionList({ sessions, activeId, onSelect, onCreate, onDelete, onRename, onRefresh, sidebarOpen = true }: Props) {
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archived, setArchived] = useState<SessionSummary[]>([]);
+  const [visibleCount, setVisibleCount] = useState(ARCHIVE_PAGE_SIZE);
+
+  const toggleArchive = async () => {
+    if (!archiveOpen && archived.length === 0) {
+      try {
+        setArchived(await listArchivedSessions());
+      } catch {
+        setArchived([]);
+      }
+    }
+    setArchiveOpen(!archiveOpen);
+  };
+
+  const handleRestore = async (id: string) => {
+    await restoreSession(id);
+    setArchived((list) => list.filter((s) => s.id !== id));
+    onRefresh?.();
+  };
+
   return (
     <aside className={`fixed md:relative z-40 inset-y-0 left-0 w-64 border-r border-gray-200 bg-white flex flex-col shrink-0 transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
       <div className="p-3 border-b border-gray-200 flex items-center justify-between">
@@ -23,6 +48,56 @@ export function SessionList({ sessions, activeId, onSelect, onCreate, onDelete, 
         >
           + 新会话
         </button>
+      </div>
+      {/* 归档入口 */}
+      <div className="px-3 py-2 border-b border-gray-100">
+        <button
+          onClick={toggleArchive}
+          className="w-full flex items-center justify-between text-xs text-gray-500 hover:text-gray-700 py-1"
+          aria-label="归档"
+        >
+          <span className="flex items-center gap-1">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+            </svg>
+            归档{archived.length > 0 ? ` (${archived.length})` : ""}
+          </span>
+          <span className="text-gray-400">{archiveOpen ? "收起" : "展开"}</span>
+        </button>
+        {archiveOpen && (
+          <div className="mt-1">
+            {archived.length === 0 ? (
+              <div className="py-2 text-xs text-gray-400 text-center">暂无归档会话</div>
+            ) : (
+              <>
+                {archived.slice(0, visibleCount).map((s) => (
+                  <div key={s.id} className="flex items-center justify-between gap-1 px-1 py-1.5 rounded hover:bg-gray-50">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-gray-600 truncate">{s.title}</p>
+                      <p className="text-[10px] text-gray-400">{formatTime(s.archived_at ?? s.updated_at)}</p>
+                    </div>
+                    <button
+                      onClick={() => handleRestore(s.id)}
+                      className="text-xs text-gray-400 hover:text-blue-600 px-1.5 py-0.5 rounded hover:bg-gray-100 shrink-0"
+                      title="恢复"
+                      aria-label="恢复"
+                    >
+                      恢复
+                    </button>
+                  </div>
+                ))}
+                {visibleCount < archived.length && (
+                  <button
+                    onClick={() => setVisibleCount((c) => c + ARCHIVE_PAGE_SIZE)}
+                    className="w-full mt-1 text-xs text-blue-600 hover:text-blue-700 py-1 rounded hover:bg-blue-50"
+                  >
+                    显示更多
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto">
         {sessions.length === 0 ? (
@@ -114,10 +189,10 @@ function SessionItem({
             </svg>
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); if (confirm("确定删除？")) onDelete(session.id); }}
+            onClick={(e) => { e.stopPropagation(); onDelete(session.id); }}
             className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-100"
-            title="删除"
-            aria-label="删除"
+            title="归档"
+            aria-label="归档"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

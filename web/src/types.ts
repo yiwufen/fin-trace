@@ -87,6 +87,7 @@ export interface SessionSummary {
   created_at: string;
   updated_at: string;
   explorations: Exploration[];
+  archived_at?: string;
 }
 
 export interface Exploration {

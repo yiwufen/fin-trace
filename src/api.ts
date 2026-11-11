@@ -5,7 +5,8 @@
 //   POST /api/sessions                  — 创建会话
 //   GET  /api/sessions/:id              — 会话详情
 //   PATCH /api/sessions/:id             — 更新会话（重命名）
-//   DELETE /api/sessions/:id            — 删除会话
+//   DELETE /api/sessions/:id            — 归档会话
+//   POST /api/sessions/:id/restore      — 恢复归档会话
 //   POST /api/sessions/:id/explore      — 启动探索
 //   GET  /api/sessions/:id/stream       — SSE 步骤推送
 //   POST /api/sessions/:id/followup     — 追问
@@ -31,8 +32,10 @@ import {
   createSession,
   getSession,
   listSessions,
+  listArchivedSessions,
   updateSession,
-  deleteSession,
+  archiveSession,
+  restoreSession,
   createExploration,
   appendStep,
   completeExploration,
@@ -335,7 +338,11 @@ export async function handleApiRequest(
     // /api/sessions — 列表 / 创建
     if (!match.sessionId) {
       if (req.method === "GET") {
-        const allSessions = await listSessions();
+        // 归档列表：GET /api/sessions?archived=true
+        const wantArchived = url.includes("archived=true");
+        const allSessions = wantArchived
+          ? await listArchivedSessions()
+          : await listSessions();
         // 排除所有分享链接的访客会话，避免污染管理端列表
         const tokenSessionIds = new Set(listTokens().flatMap((t) => t.session_ids));
         const sessions = allSessions.filter((s) => !tokenSessionIds.has(s.id));
@@ -378,18 +385,30 @@ export async function handleApiRequest(
         return true;
       }
       if (req.method === "DELETE") {
-        // 删除前先取消正在运行的任务
+        // 归档语义：先取消正在运行的任务，再置归档标记（数据保留，不删文件）
         const entry = runningExplorations.get(match.sessionId);
         if (entry) {
           entry.abortController.abort();
           runningExplorations.delete(match.sessionId!);
         }
-        await deleteSession(match.sessionId);
+        await archiveSession(match.sessionId);
         res.writeHead(204, CORS_HEADERS);
         res.end();
         return true;
       }
       sendJSON(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+
+    // /api/sessions/:id/restore — 恢复归档会话
+    if (match.action === "restore" && req.method === "POST") {
+      const restored = await restoreSession(match.sessionId);
+      if (!restored) {
+        sendJSON(res, 404, { error: "Session not found" });
+        return true;
+      }
+      res.writeHead(200, { ...CORS_HEADERS, "Content-Type": "application/json" });
+      res.end(JSON.stringify(restored));
       return true;
     }
 

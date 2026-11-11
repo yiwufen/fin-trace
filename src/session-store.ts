@@ -21,6 +21,10 @@ export interface Session {
   messages: ChatMessage[];
   /** 归属用户 ID（用户会话有值；旧数据/管理端会话无此字段） */
   owner_id?: string;
+  /** 归档标记：归档后会话从主列表隐藏，数据文件保留 */
+  archived?: boolean;
+  /** 归档时间（ISO） */
+  archived_at?: string;
 }
 
 export interface Exploration {
@@ -96,14 +100,16 @@ export interface SessionSummary {
   updated_at: string;
   explorations: Exploration[];
   owner_id?: string;
+  archived_at?: string;
 }
 
 /**
  * 列出会话摘要。
  * @param ownerId 可选，按归属过滤。传 undefined 返回全部（管理端用）。
  *                旧数据无 owner_id 字段，ownerId 过滤时会被排除（视为无主）。
+ * @param includeArchived 是否包含归档会话，默认 false（主列表排除归档）。
  */
-export async function listSessions(ownerId?: string): Promise<SessionSummary[]> {
+export async function listSessions(ownerId?: string, includeArchived = false): Promise<SessionSummary[]> {
   await ensureDir();
   const files = await readdir(DATA_DIR);
   const sessions: SessionSummary[] = [];
@@ -113,6 +119,8 @@ export async function listSessions(ownerId?: string): Promise<SessionSummary[]> 
     try {
       const raw = await readFile(join(DATA_DIR, file), "utf-8");
       const s = JSON.parse(raw) as Session;
+      // 主列表默认排除归档会话
+      if (!includeArchived && s.archived) continue;
       // 按归属过滤
       if (ownerId !== undefined && s.owner_id !== ownerId) continue;
       sessions.push({
@@ -122,6 +130,7 @@ export async function listSessions(ownerId?: string): Promise<SessionSummary[]> 
         updated_at: s.updated_at,
         explorations: s.explorations,
         owner_id: s.owner_id,
+        archived_at: s.archived_at,
       });
     } catch {
       // 跳过损坏文件
@@ -154,6 +163,49 @@ export async function deleteSession(id: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ─── 归档 / 恢复 ───
+
+/**
+ * 归档会话：仅置归档标记并写盘，不删除数据文件。
+ * 会话不存在时返回 null。
+ */
+export async function archiveSession(id: string): Promise<Session | null> {
+  const session = await getSession(id);
+  if (!session) return null;
+  session.archived = true;
+  session.archived_at = new Date().toISOString();
+  await writeFile(sessionPath(id), JSON.stringify(session, null, 2), "utf-8");
+  return session;
+}
+
+/**
+ * 恢复归档会话：清除归档标记并刷新 updated_at，
+ * 保证恢复后按「最近更新」排序回到主列表顶部语义。
+ * 会话不存在时返回 null。
+ */
+export async function restoreSession(id: string): Promise<Session | null> {
+  const session = await getSession(id);
+  if (!session) return null;
+  session.archived = false;
+  delete session.archived_at;
+  session.updated_at = new Date().toISOString();
+  await writeFile(sessionPath(id), JSON.stringify(session, null, 2), "utf-8");
+  return session;
+}
+
+/**
+ * 列出归档会话摘要，按归档时间倒序。
+ * @param ownerId 可选，按归属过滤。
+ */
+export async function listArchivedSessions(ownerId?: string): Promise<SessionSummary[]> {
+  const all = await listSessions(ownerId, true);
+  return all
+    .filter((s) => s.archived_at)
+    .sort(
+      (a, b) => new Date(b.archived_at!).getTime() - new Date(a.archived_at!).getTime(),
+    );
 }
 
 // ─── 对话消息操作 ───
