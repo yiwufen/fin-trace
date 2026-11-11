@@ -59,18 +59,19 @@ const COMPONENTS: Components = {
 
   hr: ({ node: _n, ...p }) => <hr className="my-3 border-gray-200" {...p} />,
 
-  // 行内 code:`code` → 灰底圆角小字
-  // 代码块内的 code 由 <pre> 包裹,不加额外样式(避免双重背景)
+  // 行内 code:`code` → 浅灰底圆角小字(亮色主题,与块级 pre 风格协调)
+  // 代码块内的 code 由 <pre> 包裹,不加额外背景(避免双重背景)
   code: ({ node: _n, className, children, ...p }) => {
     const isBlock = typeof className === "string" && className.startsWith("language-");
     if (isBlock) {
-      return <code className="font-mono text-xs" {...p}>{children}</code>;
+      return <code className="font-mono text-xs text-gray-800" {...p}>{children}</code>;
     }
     return <code className="bg-gray-200 text-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...p}>{children}</code>;
   },
 
+  // 代码块:浅色底 + 细边框,与亮色页面/行内 code 协调;长行横向滚动
   pre: ({ node: _n, ...p }) => (
-    <pre className="bg-gray-800 text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono first:mt-0 last:mb-0" {...p} />
+    <pre className="bg-gray-50 text-gray-800 border border-gray-200 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono first:mt-0 last:mb-0" {...p} />
   ),
 
   // 表格:外层包一层可横向滚动的容器
