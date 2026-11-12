@@ -4,7 +4,7 @@ import type {
   ToolStartEvent, ExplorationSummary, TurnSegment,
 } from "./types";
 import {
-  listSessions, createSession, deleteSession as deleteSessionApi,
+  listSessions, createSession, archiveSession as archiveSessionApi,
   getSession, sendMessage, createChatSSEConnection, getSessionStatus, cancelExploration,
   AuthError, setAuthLostHandler, logout, getMe,
 } from "./api";
@@ -521,7 +521,7 @@ export default function App() {
     selectSession(s.id);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleArchive = async (id: string) => {
     // 如果会话正在运行，先取消
     const data = sessionsRef.current.get(id);
     if (data?.isProcessing) {
@@ -533,8 +533,9 @@ export default function App() {
 
     sessionsRef.current.delete(id);
     messageCache.current.delete(id);
-    await deleteSessionApi(id);
-    await refreshSessions();
+    await archiveSessionApi(id);
+    // 归档后会话立即从会话列表消失
+    setSessions((prev) => prev.filter((s) => s.id !== id));
     if (activeIdRef.current === id) {
       activeIdRef.current = null;
       setActiveId(null);
@@ -595,7 +596,8 @@ export default function App() {
           sidebarOpen={sidebarOpen}
           onSelect={(id) => { selectSession(id); setSidebarOpen(false); }}
           onCreate={handleCreate}
-          onDelete={handleDelete}
+          onArchive={handleArchive}
+          onRestored={() => { refreshSessions().catch(() => {}); }}
           onRename={handleRename}
         />
         <main className="flex-1 flex flex-col min-w-0">
