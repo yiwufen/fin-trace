@@ -38,8 +38,8 @@ export function ChatInput({ onSend, isProcessing, reconnecting, onStop }: Props)
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
-      <div className="max-w-3xl mx-auto flex gap-2 items-end">
+    <div className="px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
+      <div className="max-w-3xl mx-auto flex gap-2 items-end bg-white border border-gray-200 rounded-2xl shadow-sm p-2">
         <textarea
           ref={textareaRef}
           value={isProcessing ? "" : text}
@@ -48,7 +48,7 @@ export function ChatInput({ onSend, isProcessing, reconnecting, onStop }: Props)
           placeholder={isProcessing ? (reconnecting ? "正在恢复连接…" : "思考中...") : "输入消息，如：分析宁德时代供应链风险"}
           disabled={isProcessing}
           rows={1}
-          className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-400 resize-none"
+          className="flex-1 px-4 py-2 rounded-xl bg-gray-50 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 resize-none"
         />
         {isProcessing ? (
           // 重连期间：灰色弱化的"取消重连"，区别于活跃任务的红色"停止"
