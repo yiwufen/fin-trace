@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SessionSummary } from "../types";
-import { updateSession, archiveSession, restoreSession, listArchivedSessions, type ArchivedSessionSummary } from "../api";
+import { updateSession, restoreSession, listArchivedSessions, type ArchivedSessionSummary } from "../api";
 
 interface Props {
   sessions: SessionSummary[];
