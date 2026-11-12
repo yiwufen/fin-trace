@@ -21,6 +21,10 @@ export interface Session {
   messages: ChatMessage[];
   /** 归属用户 ID（用户会话有值；旧数据/管理端会话无此字段） */
   owner_id?: string;
+  /** 归档标记（旧数据无此字段视为未归档，向后兼容） */
+  archived?: boolean;
+  /** 归档时间（ISO） */
+  archived_at?: string;
 }
 
 export interface Exploration {
@@ -96,6 +100,8 @@ export interface SessionSummary {
   updated_at: string;
   explorations: Exploration[];
   owner_id?: string;
+  archived?: boolean;
+  archived_at?: string;
 }
 
 /**
@@ -113,6 +119,8 @@ export async function listSessions(ownerId?: string): Promise<SessionSummary[]> 
     try {
       const raw = await readFile(join(DATA_DIR, file), "utf-8");
       const s = JSON.parse(raw) as Session;
+      // 归档会话不在默认列表中（归档模型：隐藏但可恢复）
+      if (s.archived === true) continue;
       // 按归属过滤
       if (ownerId !== undefined && s.owner_id !== ownerId) continue;
       sessions.push({
@@ -154,6 +162,81 @@ export async function deleteSession(id: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ─── 归档 / 恢复 ───
+
+/**
+ * 归档会话：写入 archived 标记与时间戳，持久化到会话 JSON 文件。
+ * 幂等：重复归档返回 true。会话不存在返回 false。
+ */
+export async function archiveSession(id: string): Promise<boolean> {
+  const session = await getSession(id);
+  if (!session) return false;
+  session.archived = true;
+  session.archived_at = session.archived_at ?? new Date().toISOString();
+  await writeFile(sessionPath(id), JSON.stringify(session, null, 2), "utf-8");
+  return true;
+}
+
+/**
+ * 恢复归档会话：清除归档标记，回到默认会话列表。
+ * 幂等：未归档会话恢复同样返回 true。会话不存在返回 false。
+ */
+export async function restoreSession(id: string): Promise<boolean> {
+  const session = await getSession(id);
+  if (!session) return false;
+  delete session.archived;
+  delete session.archived_at;
+  session.updated_at = new Date().toISOString();
+  await writeFile(sessionPath(id), JSON.stringify(session, null, 2), "utf-8");
+  return true;
+}
+
+/** 归档会话摘要（归档列表用，不含探索记录） */
+export interface ArchivedSessionSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  archived_at?: string;
+  owner_id?: string;
+}
+
+/**
+ * 列出已归档会话摘要，按 archived_at 倒序。
+ * @param ownerId 可选，按归属过滤；undefined 返回全部（管理端用）。
+ */
+export async function listArchivedSessions(ownerId?: string): Promise<ArchivedSessionSummary[]> {
+  await ensureDir();
+  const files = await readdir(DATA_DIR);
+  const sessions: ArchivedSessionSummary[] = [];
+
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    try {
+      const raw = await readFile(join(DATA_DIR, file), "utf-8");
+      const s = JSON.parse(raw) as Session;
+      if (s.archived !== true) continue;
+      if (ownerId !== undefined && s.owner_id !== ownerId) continue;
+      sessions.push({
+        id: s.id,
+        title: s.title,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        archived_at: s.archived_at,
+        owner_id: s.owner_id,
+      });
+    } catch {
+      // 跳过损坏文件
+    }
+  }
+
+  return sessions.sort(
+    (a, b) =>
+      new Date(b.archived_at ?? b.updated_at).getTime() -
+      new Date(a.archived_at ?? a.updated_at).getTime(),
+  );
 }
 
 // ─── 对话消息操作 ───

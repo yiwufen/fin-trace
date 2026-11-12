@@ -117,6 +117,28 @@ export async function deleteSession(id: string): Promise<void> {
   return request(`/sessions/${id}`, { method: "DELETE" });
 }
 
+// ─── 会话归档 / 恢复 ───
+
+export interface ArchivedSessionSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  archived_at?: string;
+}
+
+export async function archiveSession(id: string): Promise<{ archived: boolean }> {
+  return request(`/sessions/${id}/archive`, { method: "POST" });
+}
+
+export async function restoreSession(id: string): Promise<{ restored: boolean }> {
+  return request(`/sessions/${id}/restore`, { method: "POST" });
+}
+
+export async function listArchivedSessions(): Promise<ArchivedSessionSummary[]> {
+  return request("/sessions?archived=1");
+}
+
 // ─── 探索 ───
 
 export interface ExploreResponse {
